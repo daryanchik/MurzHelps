@@ -1,7 +1,8 @@
 import { BrowserWindow, nativeImage, screen } from 'electron';
 import path from 'node:path';
 import { murzAssets } from '../shared/murz-assets';
-import { murzCopy, randomCopy } from '../shared/murz-copy';
+import { murzCopy } from '../shared/murz-copy';
+import { ShuffleBag } from '../shared/shuffle-bag';
 import type { TimerSnapshot } from '../shared/timer-state';
 import { configureOverlay } from './platform';
 import type { BreakTimer } from './timer';
@@ -13,6 +14,7 @@ export class BreakWarning {
   private activeId?: number;
   private disposed = false;
   private readonly unsubscribe: (() => void)[];
+  private readonly messages = new ShuffleBag(murzCopy.warning);
 
   constructor(private readonly timer: BreakTimer, private readonly assetDirectory: string) {
     this.unsubscribe = [timer.onWarning(snapshot => this.show(snapshot)), timer.subscribe(snapshot => {
@@ -48,7 +50,7 @@ export class BreakWarning {
     const id = snapshot.intervalId;
     this.activeId = id;
     const asset = nativeImage.createFromPath(path.join(this.assetDirectory, murzAssets.mw.file)).isEmpty() ? 'mb' : 'mw';
-    const message = randomCopy(murzCopy.warning, murzCopy.states.WARNING);
+    const message = this.messages.next() ?? murzCopy.states.WARNING;
     const win = new BrowserWindow({
       ...this.bounds(), title: murzCopy.states.WARNING,
       show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,

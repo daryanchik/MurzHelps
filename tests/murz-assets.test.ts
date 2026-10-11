@@ -5,6 +5,7 @@ import { murzCopy, randomCopy } from '../src/shared/murz-copy';
 import { VisitPresentation } from '../src/main/visit-presentation';
 import { BreakTimer } from '../src/main/timer';
 import config from '../forge.config';
+import { ShuffleBag } from '../src/shared/shuffle-bag';
 
 test('all seven new assets are runtime paths allowed by the existing package filter', () => {
   const ignore = config.packagerConfig!.ignore as (file: string) => boolean;
@@ -44,4 +45,35 @@ test('snooze preserves the picture and phrase; adding copy needs no photo or tim
   assert.equal(initial.message, murzCopy.short[0]);
   assert.equal(randomCopy(['Новая реплика'], 'fallback'), 'Новая реплика');
   assert.equal(randomCopy([], murzCopy.cardTitle), murzCopy.cardTitle);
+});
+
+test('shuffle bag draws every item once per cycle and avoids repeats at boundaries', () => {
+  const bag = new ShuffleBag(['a', 'b', 'c'], () => 0);
+  const first = [bag.next(), bag.next(), bag.next()];
+  assert.deepEqual(new Set(first), new Set(['a', 'b', 'c']));
+  const second = [bag.next(), bag.next(), bag.next()];
+  assert.notEqual(first[2], second[0]);
+  assert.deepEqual(new Set(second), new Set(['a', 'b', 'c']));
+  assert.equal(new ShuffleBag<string>([]).next(), undefined);
+  assert.equal(new ShuffleBag(['a'], () => 0).next(), 'a');
+});
+
+test('short visits show all phrases and all six images before they repeat', () => {
+  const timer = new BreakTimer();
+  const view = new VisitPresentation(shortMurzAssets, () => 0);
+  const phrases: string[] = [], images: string[] = [];
+  timer.start();
+  for (let i = 0; phrases.length < murzCopy.short.length && i < 100; i++) {
+    timer.startBreakNow();
+    const snapshot = timer.snapshot();
+    const presentation = view.forVisit(snapshot);
+    if (snapshot.visitKind === 'short') {
+      phrases.push(presentation.message);
+      images.push(presentation.asset);
+    }
+    assert.equal(timer.dismissBreak(snapshot.intervalId), true);
+  }
+  assert.equal(phrases.length, murzCopy.short.length);
+  assert.equal(new Set(phrases).size, murzCopy.short.length);
+  assert.equal(new Set(images.slice(0, shortMurzAssets.length)).size, shortMurzAssets.length);
 });

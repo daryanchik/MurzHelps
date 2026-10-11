@@ -8,8 +8,15 @@ const exec = promisify(execFile);
 const { version, description } = JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as { version: string; description: string };
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
-    name: 'MurzHelps',
+  asar: true,
+osxSign: {
+  identity: '-',
+  identityValidation: false,
+  optionsForFile: () => ({
+    hardenedRuntime: false,
+  }),
+},
+  name: 'MurzHelps',
     executableName: 'MurzHelps',
     appBundleId: 'app.murzhelps.desktop',
     appCategoryType: 'public.app-category.productivity',
