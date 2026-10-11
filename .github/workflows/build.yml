@@ -2,14 +2,47 @@ name: Build MurzHelps
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_installers:
+        description: 'Build native installers (manual opt-in only)'
+        type: boolean
+        default: false
+      check_browsers:
+        description: 'Run full website browser checks (manual opt-in only)'
+        type: boolean
+        default: false
+      upload_installers:
+        description: 'Upload CI installers only after owner approval (does not publish a release)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  validate:
+    name: TypeScript, unit tests and static resources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run check:web
+
   build:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_installers
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -20,12 +53,12 @@ jobs:
             platform: darwin
             arch: arm64
             artifact: MurzHelps-macOS-arm64
-          - name: macOS Intel
+          - name: macOS Intel (experimental)
             os: macos-15-intel
             platform: darwin
             arch: x64
             artifact: MurzHelps-macOS-x64
-          - name: Windows x64
+          - name: Windows x64 (experimental)
             os: windows-2022
             platform: win32
             arch: x64
@@ -40,9 +73,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run check:web
       - name: Create native installer
         run: npm run make -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - run: npm run check:package
+      - name: Upload installers only on explicit request
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_installers
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -52,3 +89,19 @@ jobs:
             out/make/**/RELEASES
           if-no-files-found: error
           retention-days: 14
+
+  website:
+    if: github.event_name == 'workflow_dispatch' && inputs.check_browsers
+    name: Website browsers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check:web
+      - run: npx playwright install --with-deps chrome firefox webkit
+      - run: npm run test:web

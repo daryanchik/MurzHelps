@@ -14,12 +14,17 @@
     "start": "electron-forge start",
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run assets:icons",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:smoke": "node scripts/smoke.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "assets": "node scripts/prepare-assets.mjs"
+    "assets": "node scripts/prepare-assets.mjs",
+    "assets:icons": "node scripts/prepare-icons.mjs",
+    "test:web": "node scripts/test-web.mjs",
+    "check:web": "node scripts/check-web.mjs",
+    "check:package": "node scripts/check-package.mjs"
   },
   "config": {
     "forge": "./forge.config.ts"
@@ -37,7 +42,7 @@
     "esbuild": "0.28.2",
     "playwright": "1.56.1",
     "pngjs": "7.0.0",
-    "sharp": "0.34.5",
+    "sharp": "^0.35.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
   }

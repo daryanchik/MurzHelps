@@ -1,10 +1,10 @@
 "use strict";
 
-// SETUP: paste the real repository URL here. Do not include /releases.
+// Repository links remain valid before and after the v0.2.0 release.
 const SITE = Object.freeze({
-  repositoryUrl: "https://github.com/daryanchik/MurzHelps", // Example format: https://github.com/YOUR_USERNAME/MurzHelps
+  repositoryUrl: "https://github.com/daryanchik/MurzHelps",
   downloadUrl: "",   // Optional: direct HTTPS URL to a published macOS ARM64 .dmg/.zip.
-                    // Empty = open the repository's latest release page.
+                    // Empty = open the repository's releases listing (includes prereleases).
   catImage: "./assets/murz-hero.png",
 });
 
@@ -33,7 +33,7 @@ function activateLinks(selector, url) {
 }
 
 const repo = repositoryUrl(SITE.repositoryUrl);
-const releases = repo ? `${repo}/releases/latest` : null;
+const releases = repo ? `${repo}/releases` : null;
 const directDownload = safeHttps(SITE.downloadUrl);
 activateLinks("[data-repo-link]", repo);
 activateLinks("[data-release-link]", releases);
