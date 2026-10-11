@@ -1,0 +1,44 @@
+{
+  "name": "murzhelps",
+  "productName": "MurzHelps",
+  "version": "0.1.0",
+  "description": "Murz has decided that your break has started.",
+  "author": "MurzHelps",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "dist/main/main.cjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "electron-forge start",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:smoke": "node scripts/smoke.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "assets": "node scripts/prepare-assets.mjs"
+  },
+  "config": {
+    "forge": "./forge.config.ts"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "8.0.1",
+    "@electron-forge/maker-dmg": "8.0.1",
+    "@electron-forge/maker-squirrel": "8.0.1",
+    "@electron-forge/maker-zip": "8.0.1",
+    "@electron-forge/shared-types": "8.0.1",
+    "@types/electron-squirrel-startup": "1.0.2",
+    "@types/node": "^24.0.0",
+    "electron": "44.7.0",
+    "electron-squirrel-startup": "1.0.1",
+    "esbuild": "0.28.2",
+    "playwright": "1.56.1",
+    "pngjs": "7.0.0",
+    "sharp": "^0.35.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

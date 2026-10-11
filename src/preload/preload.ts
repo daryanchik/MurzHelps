@@ -1,0 +1,17 @@
+import { contextBridge, ipcRenderer } from 'electron';
+import { IPC, type LayoutSnapshot, type MurzBridge } from '../shared/types';
+
+// The renderer receives no Node, filesystem, general-purpose IPC, or Electron API.
+const bridge: MurzBridge = {
+  getLayout: () => ipcRenderer.invoke(IPC.getLayout),
+  onLayout: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: LayoutSnapshot) => callback(snapshot);
+    ipcRenderer.on(IPC.layout, listener);
+    return () => ipcRenderer.removeListener(IPC.layout, listener);
+  },
+  ready: revision => ipcRenderer.send(IPC.ready, revision),
+  dismiss: () => ipcRenderer.send(IPC.dismiss),
+  pointerMoved: () => ipcRenderer.send(IPC.pointer),
+  reportError: () => ipcRenderer.send(IPC.error),
+};
+contextBridge.exposeInMainWorld('murz', bridge);

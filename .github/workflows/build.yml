@@ -1,0 +1,54 @@
+name: Build MurzHelps
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS ARM64
+            os: macos-15
+            platform: darwin
+            arch: arm64
+            artifact: MurzHelps-macOS-arm64
+          - name: macOS Intel
+            os: macos-15-intel
+            platform: darwin
+            arch: x64
+            artifact: MurzHelps-macOS-x64
+          - name: Windows x64
+            os: windows-2022
+            platform: win32
+            arch: x64
+            artifact: MurzHelps-Windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Create native installer
+        run: npm run make -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            out/make/**/*.dmg
+            out/make/**/*.exe
+            out/make/**/*.nupkg
+            out/make/**/RELEASES
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,20 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; -webkit-app-region: no-drag; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent !important; }
+body { user-select: none; -webkit-user-select: none; }
+#murz { position: absolute; display: block; object-fit: fill; -webkit-user-drag: none; cursor: default; }
+#dismiss {
+  position: absolute;
+  appearance: none;
+  border: 1px solid #d1cdc5;
+  border-radius: 22px;
+  background: #f7f4ed;
+  color: #25241f;
+  padding: 0 16px;
+  font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+}
+#dismiss:hover { background: #fffdf7; border-color: #b9b2a6; }
+#dismiss:active { background: #e7e1d6; }
