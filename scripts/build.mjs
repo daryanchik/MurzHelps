@@ -2,10 +2,12 @@ import { build } from 'esbuild';
 import { copyFile, mkdir, rm, access } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateAppIcons } from './prepare-icons.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
-for (const file of ['murz.png', 'tray.png', 'trayTemplate.png', 'icon.ico', 'icon.icns']) {
+await generateAppIcons();
+for (const file of ['murz.png', 'tray.png', 'tray@2x.png', 'trayTemplate.png', 'trayTemplate@2x.png', 'icon.png', 'icon.ico', 'icon.icns']) {
   await access(path.join('assets', file));
 }
 await rm('dist', { recursive: true, force: true });

@@ -13,12 +13,13 @@ const config: ForgeConfig = {
     executableName: 'MurzHelps',
     appBundleId: 'app.murzhelps.desktop',
     appCategoryType: 'public.app-category.productivity',
-    icon: "./assets/icons/murz-icon",
+    icon: path.resolve('assets/icon'),
     extendInfo: { LSUIElement: true, NSHighResolutionCapable: true },
     // Bundles contain all runtime code. Never ship sources, tests or build tools.
     ignore: file => (Boolean(file)
       && !/^\/(dist(?:\/|$)|assets(?:\/|$)|package\.json$)/.test(file))
-      || /^\/assets\/source(?:\/|$)/.test(file),
+      || /^\/assets\/(source|icons)(?:\/|$)/.test(file)
+      || file === '/assets/icon.svg',
     prune: false,
   },
   rebuildConfig: {},
