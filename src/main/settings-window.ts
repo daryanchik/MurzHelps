@@ -1,5 +1,6 @@
-import { BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, ipcMain, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import { murzCopy } from '../shared/murz-copy';
 import { IPC } from '../shared/types';
 import { validateSettings, type SettingsSaveResult, type TimerSettings } from '../shared/timer-state';
 import type { SettingsStore } from './settings';
@@ -15,14 +16,14 @@ export class SettingsWindow {
     ipcMain.handle(IPC.saveSettings, async (event, input: unknown): Promise<SettingsSaveResult> => {
       if (!this.authorized(event)) throw new Error('Unexpected IPC sender');
       const checked = validateSettings(input);
-      if (!checked.ok) return { ...checked, error: 'Проверьте значения полей.' };
+      if (!checked.ok) return { ...checked, error: murzCopy.errors.checkFields };
       try {
         const saved = await store.save(checked.settings);
         if (!this.disposed) this.apply(saved);
         return { ok: true, settings: saved };
       } catch (error) {
         console.error('Could not save settings:', error);
-        return { ok: false, error: 'Не удалось сохранить настройки. Проверьте доступ к каталогу приложения и повторите попытку.' };
+        return { ok: false, error: murzCopy.errors.saveSettings };
       }
     });
     ipcMain.on(IPC.closeSettings, this.onClose);
@@ -31,8 +32,10 @@ export class SettingsWindow {
   show(): void {
     if (this.disposed) return;
     if (this.window && !this.window.isDestroyed()) { this.window.show(); this.window.focus(); return; }
+    const area = screen.getPrimaryDisplay().workArea;
     const win = new BrowserWindow({
-      title: 'MurzHelps — Settings', width: 450, height: 475, show: false,
+      title: murzCopy.settings.title, width: Math.min(560, area.width), height: Math.min(760, area.height), show: false,
+      backgroundColor: '#F6F4ED',
       resizable: false, maximizable: false, fullscreenable: false, autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, '../preload/settings-preload.cjs'),

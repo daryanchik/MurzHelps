@@ -1,69 +1,77 @@
-import { BrowserWindow, Notification, screen } from 'electron';
+import { BrowserWindow, nativeImage, screen } from 'electron';
 import path from 'node:path';
-import { formatRemaining, type TimerSnapshot } from '../shared/timer-state';
+import { murzAssets } from '../shared/murz-assets';
+import { murzCopy, randomCopy } from '../shared/murz-copy';
+import type { TimerSnapshot } from '../shared/timer-state';
+import { configureOverlay } from './platform';
 import type { BreakTimer } from './timer';
 
-/** Silent native notification, with a small nonmodal fallback for unsigned apps. */
+/** A passive cat, never a system notification or a second work timer. */
 export class BreakWarning {
-  private notification?: Notification;
-  private fallback?: BrowserWindow;
+  private window?: BrowserWindow;
   private timeout?: ReturnType<typeof setTimeout>;
   private activeId?: number;
   private disposed = false;
   private readonly unsubscribe: (() => void)[];
 
-  constructor(private readonly timer: BreakTimer) {
+  constructor(private readonly timer: BreakTimer, private readonly assetDirectory: string) {
     this.unsubscribe = [timer.onWarning(snapshot => this.show(snapshot)), timer.subscribe(snapshot => {
       if (snapshot.phase !== 'WARNING' || snapshot.intervalId !== this.activeId || snapshot.paused) this.clear();
     })];
+    screen.on('display-added', this.reposition);
+    screen.on('display-removed', this.reposition);
+    screen.on('display-metrics-changed', this.reposition);
   }
 
   dispose(): void {
     this.disposed = true;
     for (const unsubscribe of this.unsubscribe) unsubscribe();
+    screen.off('display-added', this.reposition);
+    screen.off('display-removed', this.reposition);
+    screen.off('display-metrics-changed', this.reposition);
     this.clear();
   }
+
+  private bounds() {
+    const area = screen.getPrimaryDisplay().workArea;
+    const width = Math.min(340, area.width - 24), height = Math.min(280, area.height - 24);
+    return { width, height, x: area.x + area.width - width - 12, y: area.y + area.height - height - 12 };
+  }
+
+  private reposition = (): void => {
+    if (this.window && !this.window.isDestroyed()) this.window.setBounds(this.bounds(), false);
+  };
 
   private show(snapshot: TimerSnapshot): void {
+    if (this.disposed) return;
     this.clear();
-    this.activeId = snapshot.intervalId;
-    const body = `До перерыва ${formatRemaining(snapshot.remainingMs)}. Скоро придёт Мурз.`;
-    if (!Notification.isSupported()) { this.showFallback(snapshot.intervalId, body); return; }
-    try {
-      const notification = new Notification({ title: 'MurzHelps — скоро перерыв', body, silent: true });
-      this.notification = notification;
-      notification.once('failed', () => this.showFallback(snapshot.intervalId, body));
-      notification.show();
-    } catch { this.showFallback(snapshot.intervalId, body); }
-  }
-
-  private isCurrent(id: number): boolean {
-    const snapshot = this.timer.snapshot();
-    return !this.disposed && this.activeId === id && snapshot.intervalId === id
-      && snapshot.phase === 'WARNING' && !snapshot.paused;
-  }
-
-  private showFallback(id: number, body: string): void {
-    if (!this.isCurrent(id) || this.fallback) return;
-    const area = screen.getPrimaryDisplay().workArea;
-    const width = Math.min(350, area.width - 24), height = 120;
+    const id = snapshot.intervalId;
+    this.activeId = id;
+    const asset = nativeImage.createFromPath(path.join(this.assetDirectory, murzAssets.mw.file)).isEmpty() ? 'mb' : 'mw';
+    const message = randomCopy(murzCopy.warning, murzCopy.states.WARNING);
     const win = new BrowserWindow({
-      title: 'MurzHelps — скоро перерыв', width, height,
-      x: area.x + area.width - width - 12, y: area.y + 12,
-      show: false, frame: false, resizable: false, movable: false,
+      ...this.bounds(), title: murzCopy.states.WARNING,
+      show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
+      resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
       focusable: false, skipTaskbar: true, alwaysOnTop: true,
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false },
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false, backgroundThrottling: false, spellcheck: false },
     });
-    this.fallback = win;
+    this.window = win;
     win.setMenu(null);
+    win.setIgnoreMouseEvents(true, { forward: true });
+    configureOverlay(win);
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', event => event.preventDefault());
+    win.webContents.on('will-attach-webview', event => event.preventDefault());
     win.once('closed', () => {
-      if (this.fallback === win) { this.fallback = undefined; clearTimeout(this.timeout); }
+      if (this.window === win) { this.window = undefined; clearTimeout(this.timeout); }
     });
-    void win.loadFile(path.join(__dirname, '../renderer/warning.html'), { query: { message: body } }).then(() => {
+    void win.loadFile(path.join(__dirname, '../renderer/warning.html'), { query: { message, asset } }).then(() => {
+      const current = this.timer.snapshot();
       if (win.isDestroyed()) return;
-      if (!this.isCurrent(id)) { win.destroy(); return; }
+      if (this.disposed || this.activeId !== id || current.intervalId !== id || current.phase !== 'WARNING' || current.paused) {
+        win.destroy(); return;
+      }
       win.showInactive();
       this.timeout = setTimeout(() => { if (!win.isDestroyed()) win.destroy(); }, 10_000);
     }).catch(error => {
@@ -74,12 +82,9 @@ export class BreakWarning {
 
   private clear(): void {
     this.activeId = undefined;
-    this.notification?.removeAllListeners();
-    this.notification?.close();
-    this.notification = undefined;
     clearTimeout(this.timeout);
     this.timeout = undefined;
-    if (this.fallback && !this.fallback.isDestroyed()) this.fallback.destroy();
-    this.fallback = undefined;
+    if (this.window && !this.window.isDestroyed()) this.window.destroy();
+    this.window = undefined;
   }
 }

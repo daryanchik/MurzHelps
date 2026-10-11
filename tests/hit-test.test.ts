@@ -82,3 +82,34 @@ test('visible timer panel receives input but its transparent gap still passes cl
   assert.equal(hitScreenPoint(mask, withInfo.window, { x: -1194, y: 27 }), false);
   assert.equal(hitScreenPoint(mask, withInfo.window, { x: -1198, y: 28 }), false);
 });
+
+test('silhouette outline adds only a one-DIP rim and updates when the source changes', () => {
+  const geometry: OverlayLayout = {
+    window: { x: 0, y: 0, width: 12, height: 10 },
+    cat: { x: 2, y: 2, width: 5, height: 5 },
+    button: { x: 9, y: 0, width: 3, height: 2 }, buttonRadius: 1,
+    snooze: { x: 9, y: 7, width: 3, height: 3 }, outline: 1,
+  };
+  const alpha = new Uint8Array(25); alpha[12] = 255;
+  const outlined = makeInputMask({ width: 5, height: 5, alpha }, geometry);
+  assert.equal(hitScreenPoint(outlined, geometry.window, { x: 3, y: 4 }), true);
+  assert.equal(hitScreenPoint(outlined, geometry.window, { x: 2, y: 4 }), false);
+  assert.equal(hitScreenPoint(outlined, geometry.window, { x: 10, y: 8 }), true);
+  const plain = makeInputMask({ width: 5, height: 5, alpha }, { ...geometry, outline: 0 });
+  assert.equal(hitScreenPoint(plain, geometry.window, { x: 3, y: 4 }), false);
+  const changed = new Uint8Array(25); changed[24] = 255;
+  const next = makeInputMask({ width: 5, height: 5, alpha: changed }, geometry);
+  assert.equal(hitScreenPoint(next, geometry.window, { x: 3, y: 4 }), false);
+  assert.equal(hitScreenPoint(next, geometry.window, { x: 6, y: 6 }), true);
+});
+
+test('rounded card corners remain transparent while both controls receive clicks', () => {
+  const geometry: OverlayLayout = { ...layout, window: { x: 0, y: 0, width: 30, height: 20 },
+    info: { x: 10, y: 0, width: 20, height: 20 }, infoRadius: 6,
+    button: { x: 13, y: 3, width: 14, height: 5 }, snooze: { x: 13, y: 11, width: 14, height: 5 } };
+  const mask = makeInputMask(ring, geometry);
+  assert.equal(hitScreenPoint(mask, geometry.window, { x: 10, y: 0 }), false);
+  assert.equal(hitScreenPoint(mask, geometry.window, { x: 20, y: 5 }), true);
+  assert.equal(hitScreenPoint(mask, geometry.window, { x: 20, y: 13 }), true);
+  assert.equal(hitScreenPoint(mask, geometry.window, { x: 8, y: 10 }), false);
+});

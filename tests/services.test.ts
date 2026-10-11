@@ -7,6 +7,7 @@ import { buildSync } from 'esbuild';
 import { BreakTimer } from '../src/main/timer';
 import { IPC } from '../src/shared/types';
 import { DEFAULT_SETTINGS } from '../src/shared/timer-state';
+import { murzCopy } from '../src/shared/murz-copy';
 
 // Run the real service code with a small Electron substitute. These are not GUI tests.
 const requireNode = createRequire(`${process.cwd()}/package.json`);
@@ -16,7 +17,7 @@ const sources = Object.fromEntries(['settings-window', 'tray', 'warning'].map(na
 
 function harness() {
   const windows: FakeWindow[] = [], notifications: FakeNotification[] = [], menus: any[] = [];
-  const timeouts = new Map<object, () => void>();
+  const timeouts = new Map<object, { callback: () => void; ms: number }>();
   const ipc = Object.assign(new EventEmitter(), {
     handlers: new Map<string, (...args: any[]) => any>(),
     handle(name: string, callback: (...args: any[]) => any) { this.handlers.set(name, callback); },
@@ -26,7 +27,10 @@ function harness() {
     destroyed = false; visible = false; query: any;
     webContents = Object.assign(new EventEmitter(), { mainFrame: {}, setWindowOpenHandler() {} });
     constructor(readonly options: any) { super(); windows.push(this); }
-    setMenu() {} setAlwaysOnTop() {} focus() {}
+    setMenu() {} setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} focus() {}
+    ignored = false;
+    setIgnoreMouseEvents(value: boolean) { this.ignored = value; }
+    setBounds(bounds: object) { Object.assign(this.options, bounds); }
     show() { this.visible = true; } showInactive() { this.visible = true; }
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; this.visible = false; this.emit('closed'); }
@@ -53,40 +57,46 @@ function harness() {
       menus.push(menu); return menu;
     } },
     nativeImage: { createFromPath: () => ({ isEmpty: () => false, setTemplateImage() {} }) },
-    screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 24, width: 1440, height: 876 } }) },
+    screen: Object.assign(new EventEmitter(), { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 24, width: 1440, height: 876 } }) }),
   };
   const load = (name: string) => {
     const module = { exports: {} as any };
     vm.runInNewContext(sources[name], { module, exports: module.exports,
       require: (id: string) => id === 'electron' ? electron : requireNode(id),
       __dirname: '/app/dist/main', process: { platform: 'darwin' }, console: { error() {} },
-      setTimeout: (callback: () => void) => { const handle = {}; timeouts.set(handle, callback); return handle; },
+      setTimeout: (callback: () => void, ms: number) => { const handle = {}; timeouts.set(handle, { callback, ms }); return handle; },
       clearTimeout: (handle: object) => timeouts.delete(handle),
     });
     return module.exports;
   };
-  return { load, ipc, windows, notifications, menus, timeouts, FakeNotification };
+  return { load, ipc, windows, notifications, menus, timeouts, electron };
 }
 
-test('tray commands and status remain consistent through the full timer lifecycle', () => {
+test('Russian tray commands and availability follow work, visits, snooze, pause and idle', () => {
   const h = harness(); let now = 0, settingsOpened = 0, quit = 0;
   const timer = new BreakTimer(undefined, () => now);
   const controller = h.load('tray').createTray('/assets', timer, () => settingsOpened++, () => quit++);
   const menu = h.menus[0];
   const item = (id: string) => menu.getMenuItemById(id);
   const click = (label: string) => menu.items.find((entry: any) => entry.label === label).click();
-  assert.equal(item('status').label, 'Status: Idle');
+  assert.equal(item('status').label, murzCopy.states.IDLE);
   assert.equal(item('start').enabled, true); assert.equal(item('pause').enabled, false);
-  click('Start Timer'); now = 1000; timer.tick();
-  assert.equal(item('remaining').label, 'Remaining: 59:59');
+  click(murzCopy.tray.start); now = 1000; timer.tick();
+  assert.equal(item('remaining').label, `${murzCopy.untilArrival}: 29:59`);
   assert.equal(item('start').enabled, false);
-  click('Pause'); assert.equal(item('pause').label, 'Resume');
-  assert.equal(item('status').label, 'Status: Working (Paused)');
-  click('Resume'); click('Start Break Now');
-  assert.equal(item('status').label, 'Status: Break');
-  click('Restart Work Timer'); assert.equal(item('remaining').label, 'Remaining: 01:00:00');
-  click('Stop Timer'); assert.equal(timer.snapshot().phase, 'IDLE');
-  click('Settings'); click('Quit MurzHelps');
+  click(murzCopy.tray.pause); assert.equal(item('pause').label, murzCopy.tray.resume);
+  assert.equal(item('status').label, `${murzCopy.states.WORKING} · ${murzCopy.paused}`);
+  click(murzCopy.tray.resume); click(murzCopy.tray.summon);
+  assert.equal(item('status').label, murzCopy.states.SHORT_VISIT);
+  assert.equal(item('summon').enabled, false);
+  timer.snooze(timer.snapshot().intervalId);
+  assert.equal(item('status').label, murzCopy.states.SNOOZED);
+  assert.equal(item('remaining').label, `${murzCopy.untilReturn}: 05:00`);
+  assert.equal(item('summon').enabled, false);
+  click(murzCopy.tray.restart); assert.equal(item('remaining').label, `${murzCopy.untilArrival}: 30:00`);
+  assert.equal(item('summon').enabled, true);
+  click(murzCopy.tray.stop); assert.equal(timer.snapshot().phase, 'IDLE');
+  click(murzCopy.tray.settings); click(murzCopy.tray.quit);
   assert.equal(settingsOpened, 1); assert.equal(quit, 1);
   assert.equal(h.menus.length, 1, 'countdown must not rebuild the menu');
   controller.dispose(); assert.equal(controller.tray.destroyed, true);
@@ -117,44 +127,56 @@ test('settings IPC restricts callers, validates input, and applies only after sa
   controller.dispose(); assert.equal(h.ipc.handlers.size, 0);
 });
 
-test('warning service sends one silent notification and closes it when work ends', () => {
+test('one transparent passive warning cat appears at the primary bottom right, with no notification', async () => {
   const h = harness(); let now = 0;
   const timer = new BreakTimer(undefined, () => now);
-  const warning = new (h.load('warning').BreakWarning)(timer);
-  timer.start(); now = 55 * 60_000; timer.tick(); timer.tick();
-  assert.equal(h.notifications.length, 1);
-  assert.equal(h.notifications[0].options.silent, true);
-  assert.match(h.notifications[0].options.body, /05:00/);
-  assert.equal(h.windows.length, 0);
-  now = 60 * 60_000; timer.tick();
-  assert.equal(h.notifications[0].closed, true);
+  const warning = new (h.load('warning').BreakWarning)(timer, '/assets');
+  timer.start(); now = 25 * 60_000; timer.tick(); timer.tick(); await Promise.resolve();
+  assert.equal(h.notifications.length, 0); assert.equal(h.windows.length, 1);
+  const win = h.windows[0];
+  assert.equal(win.visible, true); assert.equal(win.ignored, true);
+  assert.equal(win.options.transparent, true); assert.equal(win.options.focusable, false);
+  assert.equal(win.options.y + win.options.height, 900 - 12);
+  assert.equal(win.query.asset, 'mw'); assert.ok(murzCopy.warning.includes(win.query.message));
+  assert.equal([...h.timeouts.values()][0].ms, 10_000);
+  now = 30 * 60_000; timer.tick(); assert.equal(win.destroyed, true);
   warning.dispose();
 });
 
-test('failed native warning falls back once and releases the window on pause or expiry', async () => {
+test('warning expires without changing work, and is not repeated after pause/resume', async () => {
   const h = harness(); let now = 0;
   const timer = new BreakTimer(undefined, () => now);
-  const warning = new (h.load('warning').BreakWarning)(timer);
-  timer.start(); now = 55 * 60_000; timer.tick();
-  const failure = h.notifications[0].listeners('failed')[0];
-  h.notifications[0].emit('failed'); h.notifications[0].emit('failed');
-  await Promise.resolve();
-  assert.equal(h.windows.length, 1); assert.equal(h.windows[0].visible, true);
-  timer.pause(); assert.equal(h.windows[0].destroyed, true); assert.equal(h.timeouts.size, 0);
-  timer.resume(); timer.startBreakNow(); failure();
-  assert.equal(h.windows.length, 1, 'a stale asynchronous failure cannot show a warning during break');
-  warning.dispose();
-});
-
-test('fallback automatically disappears after its timeout, and quit clears all resources', async () => {
-  const h = harness(); h.FakeNotification.isSupported = () => false;
-  const timer = new BreakTimer({ workMinutes: 1, breakMinutes: 1, warningMinutes: 1 }, () => 0);
-  const warning = new (h.load('warning').BreakWarning)(timer);
-  timer.start(); await Promise.resolve();
-  assert.equal(h.windows[0].visible, true);
-  [...h.timeouts.values()][0](); assert.equal(h.windows[0].destroyed, true);
-  timer.restartWork(); await Promise.resolve();
-  warning.dispose();
+  const warning = new (h.load('warning').BreakWarning)(timer, '/assets');
+  timer.start(); now = 25 * 60_000; timer.tick(); await Promise.resolve();
+  [...h.timeouts.values()][0].callback(); assert.equal(h.windows[0].destroyed, true);
+  assert.equal(timer.snapshot().phase, 'WARNING');
+  timer.pause(); timer.resume(); timer.tick(); await Promise.resolve();
+  assert.equal(h.windows.length, 1);
+  timer.restartWork(); now += 25 * 60_000; timer.tick(); await Promise.resolve();
+  assert.equal(h.windows.length, 2); timer.pause();
   assert.equal(h.windows[1].destroyed, true); assert.equal(h.timeouts.size, 0);
-  timer.restartWork(); assert.equal(h.windows.length, 2);
+  warning.dispose(); assert.equal(h.electron.screen.listenerCount('display-added'), 0);
+});
+
+test('a stale asynchronous warning load cannot appear during a visit', async () => {
+  const h = harness(); let now = 0;
+  const timer = new BreakTimer(undefined, () => now);
+  const warning = new (h.load('warning').BreakWarning)(timer, '/assets');
+  timer.start(); now = 25 * 60_000; timer.tick(); timer.startBreakNow();
+  await Promise.resolve();
+  assert.equal(h.windows.length, 1); assert.equal(h.windows[0].destroyed, true);
+  assert.equal(h.windows[0].visible, false); assert.equal(h.timeouts.size, 0);
+  warning.dispose();
+});
+
+test('zero warning creates nothing; missing warning PNG falls back to the existing big cat', async () => {
+  const h = harness();
+  const timer = new BreakTimer({ ...DEFAULT_SETTINGS, warningMinutes: 0 }, () => 0);
+  const warning = new (h.load('warning').BreakWarning)(timer, '/assets');
+  timer.start(); assert.equal(h.windows.length, 0);
+  h.electron.nativeImage.createFromPath = () => ({ isEmpty: () => true, setTemplateImage() {} });
+  timer.configure({ ...DEFAULT_SETTINGS, warningMinutes: 5, workMinutes: 5 });
+  timer.restartWork(); await Promise.resolve();
+  assert.equal(h.windows[0].query.asset, 'mb'); warning.dispose();
+  assert.equal(h.windows[0].destroyed, true); assert.equal(h.timeouts.size, 0);
 });

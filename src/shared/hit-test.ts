@@ -50,17 +50,31 @@ export function makeInputMask(source: AlphaRaster, layout: OverlayLayout): Input
       if (alpha >= ALPHA_THRESHOLD) pixels[(cat.y + y) * width + cat.x + x] = 1;
     }
   }
-  const button = layout.button;
-  for (let y = button.y; y < button.y + button.height; y++) {
-    for (let x = button.x; x < button.x + button.width; x++) {
-      if (roundedContains(button, layout.buttonRadius, { x: x + 0.5, y: y + 0.5 })) pixels[y * width + x] = 1;
+  if (layout.outline) {
+    const original = pixels.slice();
+    const radius = Math.min(2, Math.max(0, Math.ceil(layout.outline)));
+    for (let y = Math.max(0, cat.y - radius); y < Math.min(height, cat.y + cat.height + radius); y++) {
+      for (let x = Math.max(0, cat.x - radius); x < Math.min(width, cat.x + cat.width + radius); x++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const sx = x + dx, sy = y + dy;
+            if (sx >= 0 && sy >= 0 && sx < width && sy < height && original[sy * width + sx]) {
+              pixels[y * width + x] = 1;
+            }
+          }
+        }
+      }
     }
   }
-  // This box is opaque UI, so it belongs to the same native input region.
-  if (layout.info) {
-    const info = layout.info;
-    for (let y = info.y; y < info.y + info.height; y++) {
-      for (let x = info.x; x < info.x + info.width; x++) pixels[y * width + x] = 1;
+  const controls: [Rect | undefined, number][] = [
+    [layout.button, layout.buttonRadius], [layout.snooze, layout.buttonRadius], [layout.info, layout.infoRadius ?? 0],
+  ];
+  for (const [rect, radius] of controls) {
+    if (!rect) continue;
+    for (let y = Math.max(0, rect.y); y < Math.min(height, rect.y + rect.height); y++) {
+      for (let x = Math.max(0, rect.x); x < Math.min(width, rect.x + rect.width); x++) {
+        if (roundedContains(rect, radius, { x: x + 0.5, y: y + 0.5 })) pixels[y * width + x] = 1;
+      }
     }
   }
   return { width, height, pixels };

@@ -24,6 +24,7 @@ assert.ok(!html.includes('/releases/download/'), 'do not invent an installer URL
 assert.equal((html.match(/data-download-link/g) || []).length, 2);
 assert.ok(html.includes('href="https://github.com/daryanchik/MurzHelps"'));
 assert.ok(html.includes('href="./assets/murz-icon.png"'));
-const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-assert.ok(html.includes(`v${version.replace(/\.0$/, '')} · Apple Silicon`));
-console.log(`Website resources, favicon, release links and version ${version} validated under /MurzHelps/.`);
+// The published site may describe an earlier release than the desktop sources.
+const siteVersion = html.match(/v(\d+\.\d+(?:\.\d+)?) · Apple Silicon/);
+assert.ok(siteVersion, 'The site must identify its published Apple Silicon release');
+console.log(`Website resources, favicon, release links and published version ${siteVersion[1]} validated under /MurzHelps/.`);

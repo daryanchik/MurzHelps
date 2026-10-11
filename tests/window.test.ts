@@ -7,12 +7,13 @@ import { buildSync } from 'esbuild';
 import { IPC } from '../src/shared/types';
 import { BreakTimer } from '../src/main/timer';
 import { bindTimerView } from '../src/main/timer-view';
+import type { ShortMurzAssetId } from '../src/shared/murz-assets';
 
 // Exercise the actual main-process controller without claiming an OS GUI test.
 const code = buildSync({ entryPoints: ['src/main/window.ts'], bundle: true, platform: 'node', format: 'cjs', external: ['electron'], write: false }).outputFiles[0].text;
 const requireNode = createRequire(`${process.cwd()}/package.json`);
 
-function harness(platform: 'darwin' | 'win32', shapeFails = false) {
+function harness(platform: 'darwin' | 'win32', shapeFails = false, available: ShortMurzAssetId[] = []) {
   const timeouts = new Map<object, { callback: () => void; ms: number }>();
   const intervals = new Map<object, () => void>();
   const ipc = Object.assign(new EventEmitter(), {
@@ -60,7 +61,12 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false) {
   const electron = {
     app: { quit: () => quit++ }, BrowserWindow: FakeWindow, ipcMain: ipc, screen, powerMonitor: power,
     dialog: { showErrorBox() {} },
-    nativeImage: { createFromPath: () => ({ isEmpty: () => false, getSize: () => ({ width: 3, height: 3 }), toBitmap: () => bitmap }) },
+    nativeImage: { createFromPath: (file: string) => ({ isEmpty: () => false, getSize: () => ({ width: 3, height: 3 }), toBitmap: () => {
+      if (!/ms[12]\.png$/.test(file)) return bitmap;
+      const variant = Buffer.alloc(3 * 3 * 4);
+      variant[(file.endsWith('ms1.png') ? 3 : 5) * 4 + 3] = 255;
+      return variant;
+    } }) },
   };
   const module = { exports: {} as any };
   vm.runInNewContext(code, {
@@ -72,8 +78,9 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false) {
     setInterval: (callback: () => void) => { const id = {}; intervals.set(id, callback); return id; },
     clearInterval: (id: object) => intervals.delete(id),
   });
-  const timer = new BreakTimer(undefined, () => 0);
-  const controller = new module.exports.MurzWindow('/app/assets', (id: number) => timer.dismissBreak(id));
+  let now = 0;
+  const timer = new BreakTimer(undefined, () => now);
+  const controller = new module.exports.MurzWindow('/app/assets', (id: number) => timer.dismissBreak(id), (id: number) => timer.snooze(id), available);
   bindTimerView(timer, controller);
   const window: FakeWindow = controller.window;
   const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
@@ -83,14 +90,14 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false) {
   const advance = (ms: number) => {
     for (const [id, timer] of [...timeouts]) if (timer.ms === ms) { timeouts.delete(id); timer.callback(); }
   };
-  return { controller, timer, summon, window, event, ipc, snapshot, ready, screen, display, cursor, intervals, timeouts, power, advance, quit: () => quit };
+  return { elapse: (ms: number) => { now += ms; timer.tick(); }, controller, timer, summon, window, event, ipc, snapshot, ready, screen, display, cursor, intervals, timeouts, power, advance, quit: () => quit };
 }
 
 test('actual controller blocks early display; dismissal and summon reuse the same window', t => {
   const h = harness('darwin'); t.after(() => h.controller.dispose());
   assert.equal(h.window.visible, false);
   h.ready();
-  assert.equal(h.window.visible, false, 'v0.2 launches IDLE, including after renderer readiness');
+  assert.equal(h.window.visible, false, 'readiness alone never starts a timer');
   h.summon();
   assert.equal(h.window.visible, true);
   assert.equal(h.intervals.size, 1);
@@ -177,7 +184,44 @@ test('dismissal token prevents late IPC from dismissing a newer break', t => {
   h.summon();
   for (const invalid of [oldId, undefined, '3', NaN, Infinity]) h.ipc.emit(IPC.dismiss, h.event, invalid);
   assert.equal(h.window.visible, true);
-  assert.equal(h.timer.snapshot().phase, 'BREAK');
+  assert.equal(h.timer.snapshot().phase, 'SHORT_VISIT');
   h.timer.pause(); assert.equal(h.window.visible, true);
   h.timer.stop(); assert.equal(h.window.visible, false);
+});
+
+test('snooze IPC validates sender and token, hides once, and rejects old commands after return', t => {
+  const h = harness('darwin', false, ['ms1', 'ms2']); t.after(() => h.controller.dispose()); h.summon();
+  const old = h.timer.snapshot().intervalId;
+  const presentation = h.snapshot().presentation;
+  h.ipc.emit(IPC.snooze, { sender: {}, senderFrame: {} }, old);
+  h.ipc.emit(IPC.snooze, { sender: h.window.webContents, senderFrame: {} }, old);
+  assert.equal(h.window.visible, true);
+  h.ipc.emit(IPC.snooze, h.event, old); h.ipc.emit(IPC.snooze, h.event, old);
+  assert.equal(h.window.visible, false); assert.equal(h.timer.snapshot().phase, 'SNOOZED');
+  h.elapse(5 * 60_000); h.ready();
+  assert.deepEqual(h.snapshot().presentation, presentation);
+  assert.equal(h.window.visible, true);
+  h.ipc.emit(IPC.dismiss, h.event, old); h.ipc.emit(IPC.snooze, h.event, old);
+  h.ipc.emit(IPC.snooze, h.event, h.timer.snapshot().intervalId);
+  assert.equal(h.window.visible, true); assert.equal(h.timer.snapshot().phase, 'SHORT_VISIT');
+  h.ipc.emit(IPC.dismiss, h.event, h.timer.snapshot().intervalId);
+  assert.equal(h.window.visible, false);
+});
+
+test('switching photos rebuilds both the displayed asset and the native alpha input region', t => {
+  const h = harness('win32', false, ['ms1', 'ms2']); t.after(() => h.controller.dispose()); h.summon();
+  const before = h.snapshot(); const shape = h.window.shapes.at(-1);
+  assert.equal(before.layout.outline, 1);
+  h.ipc.emit(IPC.dismiss, h.event, h.timer.snapshot().intervalId); h.summon();
+  const after = h.snapshot();
+  assert.notEqual(after.presentation.asset, before.presentation.asset);
+  assert.ok(after.revision > before.revision);
+  assert.notDeepEqual(h.window.shapes.at(-1), shape);
+  const { button, snooze } = after.layout;
+  assert.ok(snooze.y > button.y);
+});
+
+test('missing short photos use murz.png without adding a second outline', t => {
+  const h = harness('darwin'); t.after(() => h.controller.dispose()); h.summon();
+  assert.equal(h.snapshot().presentation.asset, 'mb'); assert.equal(h.snapshot().layout.outline, 0);
 });

@@ -1,20 +1,33 @@
-export type TimerPhase = 'IDLE' | 'WORKING' | 'WARNING' | 'BREAK';
+import { murzCopy } from './murz-copy';
+
+export type TimerPhase = 'IDLE' | 'WORKING' | 'WARNING' | 'SHORT_VISIT' | 'LONG_VISIT' | 'SNOOZED';
+export type VisitKind = 'short' | 'long';
+export const SNOOZE_MS = 5 * 60_000;
+export function isVisit(phase: TimerPhase): boolean { return phase === 'SHORT_VISIT' || phase === 'LONG_VISIT'; }
 export type PauseReason = 'user' | 'sleep' | 'lock';
 
 export interface TimerSettings {
   workMinutes: number;
-  breakMinutes: number;
+  shortMinutes: number;
+  longMinutes: number;
+  longEvery: number;
+  autoStart: boolean;
   warningMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: Readonly<TimerSettings> = Object.freeze({
-  workMinutes: 60, breakMinutes: 45, warningMinutes: 5,
+  workMinutes: 30, shortMinutes: 5, longMinutes: 15, longEvery: 4, warningMinutes: 5, autoStart: true,
 });
 
 export interface TimerSnapshot {
   revision: number;
   phase: TimerPhase;
   intervalId: number;
+  visitId: number | null;
+  visitKind: VisitKind | null;
+  snoozeUsed: boolean;
+  workIndex: number;
+  cycleLength: number;
   remainingMs: number;
   durationMs: number;
   paused: boolean;
@@ -31,25 +44,29 @@ export interface SettingsSnapshot { settings: TimerSettings; loadWarning?: strin
 
 export function validateSettings(input: unknown): SettingsValidation {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return { ok: false, errors: {}, error: 'Ожидались три числовых параметра.' };
+    return { ok: false, errors: {}, error: murzCopy.errors.settingsObject };
   }
   const record = input as Record<string, unknown>;
   const errors: SettingsErrors = {};
-  const ranges = { workMinutes: [1, 240], breakMinutes: [1, 120], warningMinutes: [0, 15] } as const;
-  for (const key of Object.keys(ranges) as (keyof TimerSettings)[]) {
+  const ranges = { workMinutes: [1, 240], shortMinutes: [1, 120], longMinutes: [1, 120], longEvery: [1, 24], warningMinutes: [0, 15] } as const;
+  for (const key of Object.keys(ranges) as (keyof typeof ranges)[]) {
     const value = record[key];
     const [min, max] = ranges[key];
     if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
-      errors[key] = `Введите целое число от ${min} до ${max}.`;
+      errors[key] = murzCopy.errors.numberRange(min, max);
     }
   }
+  if (typeof record.autoStart !== 'boolean') errors.autoStart = murzCopy.errors.boolean;
   if (!errors.workMinutes && !errors.warningMinutes && (record.warningMinutes as number) > (record.workMinutes as number)) {
-    errors.warningMinutes = 'Предупреждение не может быть длиннее рабочего интервала.';
+    errors.warningMinutes = murzCopy.errors.warningRange;
   }
   if (Object.keys(errors).length) return { ok: false, errors };
   return { ok: true, settings: {
     workMinutes: record.workMinutes as number,
-    breakMinutes: record.breakMinutes as number,
+    shortMinutes: record.shortMinutes as number,
+    longMinutes: record.longMinutes as number,
+    longEvery: record.longEvery as number,
+    autoStart: record.autoStart as boolean,
     warningMinutes: record.warningMinutes as number,
   } };
 }
@@ -63,6 +80,6 @@ export function formatRemaining(milliseconds: number): string {
 }
 
 export function idleSnapshot(): TimerSnapshot {
-  return { revision: 0, phase: 'IDLE', intervalId: 0, remainingMs: 0, durationMs: 0,
+  return { revision: 0, phase: 'IDLE', intervalId: 0, visitId: null, visitKind: null, snoozeUsed: false, workIndex: 0, cycleLength: DEFAULT_SETTINGS.longEvery, remainingMs: 0, durationMs: 0,
     paused: false, pauseReasons: [], settings: { ...DEFAULT_SETTINGS } };
 }

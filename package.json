@@ -1,8 +1,8 @@
 {
   "name": "murzhelps",
   "productName": "MurzHelps",
-  "version": "0.2.0",
-  "description": "Murz has decided that your break has started.",
+  "version": "0.3.0",
+  "description": "Мурзик помогает тебе работать.",
   "author": "MurzHelps",
   "private": true,
   "license": "UNLICENSED",

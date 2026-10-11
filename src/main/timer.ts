@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
-import { DEFAULT_SETTINGS, validateSettings } from '../shared/timer-state';
-import type { PauseReason, TimerPhase, TimerSettings, TimerSnapshot } from '../shared/timer-state';
+import { DEFAULT_SETTINGS, validateSettings, isVisit, SNOOZE_MS } from '../shared/timer-state';
+import type { PauseReason, VisitKind, TimerPhase, TimerSettings, TimerSnapshot } from '../shared/timer-state';
 
 const MINUTE = 60_000;
 type Listener = (snapshot: TimerSnapshot) => void;
@@ -9,6 +9,14 @@ type Listener = (snapshot: TimerSnapshot) => void;
 export class BreakTimer {
   private phase: TimerPhase = 'IDLE';
   private intervalId = 0;
+  private visitSequence = 0;
+  private visitId: number | null = null;
+  private visitKind: VisitKind | null = null;
+  private visitDuration = 0;
+  private snoozeUsed = false;
+  private standalone = false;
+  private workIndex = 0;
+  private cycleLength = DEFAULT_SETTINGS.longEvery;
   private revision = 0;
   private deadline: number | null = null;
   private frozenRemaining = 0;
@@ -44,39 +52,67 @@ export class BreakTimer {
     this.restartWork();
   }
 
+  startAutomatically(): void {
+    if (this.settings.autoStart) this.start();
+  }
+
   restartWork(): void {
     const now = this.now();
     this.pauses.delete('user');
-    this.begin('WORKING', now);
+    this.beginCycle(now);
     this.advance(now);
     this.publish(now);
   }
 
   startBreakNow(): void {
     const now = this.now();
+    this.advance(now);
+    if (isVisit(this.phase) || this.phase === 'SNOOZED') { this.publish(now); return; }
     this.pauses.delete('user');
-    this.begin('BREAK', now);
+    if (this.phase === 'IDLE') {
+      this.workIndex = 0;
+      this.cycleLength = this.settings.longEvery;
+      this.standalone = true;
+    }
+    this.beginVisit(now, this.phase !== 'IDLE' && this.workIndex === this.cycleLength ? 'long' : 'short');
     this.publish(now);
   }
 
-  /** The id makes double-clicks and late messages from an older break harmless. */
+  /** Tokens change on snooze and return, so even a delayed first-screen click is stale. */
   dismissBreak(expectedIntervalId: number): boolean {
     const now = this.now();
     this.advance(now);
-    if (!Number.isSafeInteger(expectedIntervalId) || this.phase !== 'BREAK' || expectedIntervalId !== this.intervalId) {
-      this.publish(now);
-      return false;
-    }
+    if (!this.acceptsVisitCommand(expectedIntervalId)) { this.publish(now); return false; }
     this.pauses.delete('user');
-    this.begin('WORKING', now);
+    this.finishVisit(now);
     this.advance(now);
     this.publish(now);
     return true;
   }
 
+  snooze(expectedIntervalId: number): boolean {
+    const now = this.now();
+    this.advance(now);
+    if (!this.acceptsVisitCommand(expectedIntervalId) || this.snoozeUsed) { this.publish(now); return false; }
+    this.pauses.delete('user');
+    this.snoozeUsed = true;
+    this.begin('SNOOZED', now, SNOOZE_MS);
+    this.publish(now);
+    return true;
+  }
+
+  private acceptsVisitCommand(id: number): boolean {
+    return Number.isSafeInteger(id) && isVisit(this.phase) && id === this.intervalId;
+  }
+
   stop(): void {
     const now = this.now();
     this.phase = 'IDLE';
+    this.visitId = null;
+    this.visitKind = null;
+    this.snoozeUsed = false;
+    this.standalone = false;
+    this.workIndex = 0;
     this.deadline = null;
     this.frozenRemaining = this.duration = this.activeWarning = 0;
     this.warningSent = false;
@@ -111,33 +147,65 @@ export class BreakTimer {
     return Math.max(0, this.deadline === null ? this.frozenRemaining : this.deadline - now);
   }
 
-  private begin(phase: 'WORKING' | 'BREAK', at: number): void {
+  private begin(phase: TimerPhase, at: number, duration: number): void {
     this.phase = phase;
     this.intervalId++;
-    this.duration = (phase === 'BREAK' ? this.settings.breakMinutes : this.settings.workMinutes) * MINUTE;
+    this.duration = duration;
     this.activeWarning = phase === 'WORKING' ? this.settings.warningMinutes * MINUTE : 0;
     this.warningSent = false;
-    this.frozenRemaining = this.duration;
-    this.deadline = this.pauses.size ? null : at + this.duration;
+    this.frozenRemaining = duration;
+    this.deadline = this.pauses.size ? null : at + duration;
+  }
+
+  private beginWork(at: number): void {
+    this.visitId = null;
+    this.visitKind = null;
+    this.snoozeUsed = false;
+    this.begin('WORKING', at, this.settings.workMinutes * MINUTE);
+  }
+
+  private beginCycle(at: number): void {
+    this.workIndex = 1;
+    this.cycleLength = this.settings.longEvery;
+    this.standalone = false;
+    this.beginWork(at);
+  }
+
+  private beginVisit(at: number, kind: VisitKind): void {
+    this.visitId = ++this.visitSequence;
+    this.visitKind = kind;
+    this.snoozeUsed = false;
+    this.visitDuration = (kind === 'long' ? this.settings.longMinutes : this.settings.shortMinutes) * MINUTE;
+    this.begin(kind === 'long' ? 'LONG_VISIT' : 'SHORT_VISIT', at, this.visitDuration);
+  }
+
+  private finishVisit(at: number): void {
+    if (this.visitKind === 'long' || this.standalone) this.beginCycle(at);
+    else { this.workIndex++; this.beginWork(at); }
   }
 
   private advance(now: number): void {
     if (this.phase === 'IDLE' || this.pauses.size || this.deadline === null) return;
-    // Retain overshoot: a delayed UI tick cannot extend the current interval.
-    // Only the final live state is published, so expired breaks never flash onscreen.
+    // Retain elapsed overshoot, publishing only the final live state.
     while (this.deadline !== null && now >= this.deadline) {
       const boundary: number = this.deadline;
-      if (this.phase === 'BREAK') {
-        this.begin('WORKING', boundary);
-        const cycle = (this.settings.workMinutes + this.settings.breakMinutes) * MINUTE;
-        const skip = Math.floor((now - boundary) / cycle);
-        // Skip arbitrarily many complete cycles without an unbounded catch-up loop.
-        if (skip > 0) {
-          this.deadline = boundary + skip * cycle + this.duration;
-          this.intervalId += skip * 2;
+      if (this.phase === 'SNOOZED') {
+        this.begin(this.visitKind === 'long' ? 'LONG_VISIT' : 'SHORT_VISIT', boundary, this.visitDuration);
+      } else if (isVisit(this.phase)) {
+        const completedCycle = this.visitKind === 'long' || this.standalone;
+        this.finishVisit(boundary);
+        if (completedCycle) {
+          const cycle = (this.cycleLength * this.settings.workMinutes
+            + (this.cycleLength - 1) * this.settings.shortMinutes + this.settings.longMinutes) * MINUTE;
+          const skip = Math.floor((now - boundary) / cycle);
+          if (skip > 0) {
+            this.deadline = boundary + skip * cycle + this.duration;
+            this.intervalId += skip * this.cycleLength * 2;
+            this.visitSequence += skip * this.cycleLength;
+          }
         }
       } else {
-        this.begin('BREAK', boundary);
+        this.beginVisit(boundary, this.workIndex === this.cycleLength ? 'long' : 'short');
       }
     }
     if (this.phase === 'WORKING' && this.activeWarning > 0 && this.remaining(now) <= this.activeWarning) {
@@ -166,6 +234,8 @@ export class BreakTimer {
   private makeSnapshot(now: number): TimerSnapshot {
     return {
       revision: this.revision, phase: this.phase, intervalId: this.intervalId,
+      visitId: this.visitId, visitKind: this.visitKind, snoozeUsed: this.snoozeUsed,
+      workIndex: this.workIndex, cycleLength: this.cycleLength,
       remainingMs: this.remaining(now), durationMs: this.duration,
       paused: this.phase !== 'IDLE' && this.pauses.size > 0,
       pauseReasons: [...this.pauses].sort(), settings: { ...this.settings },
@@ -177,7 +247,7 @@ export class BreakTimer {
     if (notifyWarning) this.warningSent = true;
     const snapshot = this.makeSnapshot(now);
     const key = JSON.stringify([snapshot.phase, snapshot.intervalId, Math.ceil(snapshot.remainingMs / 1000),
-      snapshot.durationMs, snapshot.pauseReasons, snapshot.settings]);
+      snapshot.durationMs, snapshot.pauseReasons, snapshot.settings, snapshot.visitId, snapshot.snoozeUsed, snapshot.workIndex, snapshot.cycleLength]);
     if (key !== this.lastPublished) {
       this.lastPublished = key;
       this.revision++;

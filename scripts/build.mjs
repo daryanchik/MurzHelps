@@ -24,5 +24,6 @@ await Promise.all([
   copyFile('src/renderer/settings.html', 'dist/renderer/settings.html'),
   copyFile('src/renderer/settings.css', 'dist/renderer/settings.css'),
   copyFile('src/renderer/warning.html', 'dist/renderer/warning.html'),
+  copyFile('src/renderer/warning.css', 'dist/renderer/warning.css'),
 ]);
 console.log('Built main, sandboxed preload, and renderer.');

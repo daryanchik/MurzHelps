@@ -1,17 +1,23 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { murzAssets, shortMurzAssets, type MurzAssetId, type MurzPresentation, type ShortMurzAssetId } from '../shared/murz-assets';
+import { murzCopy } from '../shared/murz-copy';
+import { VisitPresentation } from './visit-presentation';
 import { calculateLayout } from '../shared/layout';
 import { extractAlpha, hitScreenPoint, makeInputMask, maskToRectangles } from '../shared/hit-test';
 import type { AlphaRaster, InputMask } from '../shared/hit-test';
 import { IPC, type LayoutSnapshot, type OverlayLayout } from '../shared/types';
 import { VisibilityState } from '../shared/visibility';
 import { configureOverlay } from './platform';
-import { idleSnapshot, type TimerSnapshot } from '../shared/timer-state';
+import { idleSnapshot, isVisit, type TimerSnapshot } from '../shared/timer-state';
 
 export class MurzWindow {
   readonly window: BrowserWindow;
-  private readonly alpha: AlphaRaster;
+  private alpha: AlphaRaster;
+  private readonly presentations: VisitPresentation;
+  private presentation: MurzPresentation = { asset: 'mb', message: murzCopy.long };
   private readonly state = new VisibilityState();
   private layout!: OverlayLayout;
   private mask!: InputMask;
@@ -24,18 +30,16 @@ export class MurzWindow {
   private failed = false;
   private timerState = idleSnapshot();
 
-  constructor(assetDirectory: string, private readonly onDismissRequest: (intervalId: number) => void) {
-    this.state.dismiss(); // v0.2 always launches hidden in IDLE.
-    const image = nativeImage.createFromPath(path.join(assetDirectory, 'murz.png'));
-    if (image.isEmpty()) throw new Error('assets/murz.png is missing or invalid');
-    const size = image.getSize();
-    this.alpha = extractAlpha(image.toBitmap({ scaleFactor: 1 }), size.width, size.height);
-    if (!this.alpha.alpha.some(value => value === 0) || !this.alpha.alpha.some(value => value > 200)) {
-      throw new Error('murz.png must contain both transparent background and visible cat pixels');
-    }
+  constructor(private readonly assetDirectory: string,
+    private readonly onDismissRequest: (intervalId: number) => void,
+    private readonly onSnoozeRequest: (intervalId: number) => void = () => {},
+    available: readonly ShortMurzAssetId[] = shortMurzAssets.filter(id => existsSync(path.join(assetDirectory, murzAssets[id].file)))) {
+    this.state.dismiss();
+    this.presentations = new VisitPresentation(available);
+    this.alpha = this.loadAlpha('mb');
 
     this.window = new BrowserWindow({
-      title: 'MurzHelps',
+      title: murzCopy.brand,
       width: 400, height: 400,
       show: false,
       frame: false,
@@ -78,7 +82,7 @@ export class MurzWindow {
     this.window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.window.webContents.session.setPermissionCheckHandler(() => false);
     this.window.webContents.on('render-process-gone', (_event, details) => {
-      if (!this.disposed) this.fail(`Renderer stopped (${details.reason}).`);
+      if (!this.disposed) { console.error(details.reason); this.fail(murzCopy.errors.renderer); }
     });
     this.window.on('will-move', event => event.preventDefault());
     this.window.on('will-resize', event => event.preventDefault());
@@ -95,6 +99,7 @@ export class MurzWindow {
     });
     ipcMain.on(IPC.ready, this.onReady);
     ipcMain.on(IPC.dismiss, this.onDismiss);
+    ipcMain.on(IPC.snooze, this.onSnooze);
     ipcMain.on(IPC.pointer, this.onPointer);
     ipcMain.on(IPC.error, this.onRendererError);
     screen.on('display-added', this.scheduleReflow);
@@ -110,6 +115,17 @@ export class MurzWindow {
   }
 
   setTimerSnapshot(snapshot: TimerSnapshot): void {
+    try {
+      if (snapshot.visitId !== null && snapshot.visitId !== this.timerState.visitId) {
+        const next = this.presentations.forVisit(snapshot);
+        if (next.asset !== this.presentation.asset) {
+          this.presentation = next;
+          this.alpha = this.loadAlpha(next.asset);
+        } else this.presentation.message = next.message;
+      }
+    } catch (error) {
+      console.error(error); this.fail(murzCopy.errors.missingCat); return;
+    }
     this.timerState = snapshot;
     if (!this.disposed && !this.window.isDestroyed()) this.window.webContents.send(IPC.timer, snapshot);
   }
@@ -139,6 +155,7 @@ export class MurzWindow {
     ipcMain.removeHandler(IPC.getTimer);
     ipcMain.off(IPC.ready, this.onReady);
     ipcMain.off(IPC.dismiss, this.onDismiss);
+    ipcMain.off(IPC.snooze, this.onSnooze);
     ipcMain.off(IPC.pointer, this.onPointer);
     ipcMain.off(IPC.error, this.onRendererError);
     screen.off('display-added', this.scheduleReflow);
@@ -155,7 +172,7 @@ export class MurzWindow {
   }
 
   private snapshot(): LayoutSnapshot {
-    return { revision: this.state.revision, layout: this.layout };
+    return { revision: this.state.revision, layout: this.layout, presentation: { ...this.presentation }, intervalId: this.timerState.intervalId };
   }
 
   private onReady = (event: IpcMainEvent, revision: unknown): void => {
@@ -172,17 +189,39 @@ export class MurzWindow {
 
   private onDismiss = (event: IpcMainEvent, intervalId: unknown): void => {
     if (this.authorized(event) && typeof intervalId === 'number' && Number.isSafeInteger(intervalId)
-        && this.timerState.phase === 'BREAK' && this.timerState.intervalId === intervalId) {
+        && isVisit(this.timerState.phase) && this.timerState.intervalId === intervalId) {
       this.onDismissRequest(intervalId);
     }
   };
+
+  private onSnooze = (event: IpcMainEvent, intervalId: unknown): void => {
+    if (this.authorized(event) && typeof intervalId === 'number' && Number.isSafeInteger(intervalId)
+        && isVisit(this.timerState.phase) && !this.timerState.snoozeUsed && this.timerState.intervalId === intervalId) {
+      this.onSnoozeRequest(intervalId);
+    }
+  };
+
+  private loadAlpha(id: MurzAssetId): AlphaRaster {
+    let image = nativeImage.createFromPath(path.join(this.assetDirectory, murzAssets[id].file));
+    if (image.isEmpty() && id !== 'mb') {
+      this.presentation.asset = 'mb';
+      image = nativeImage.createFromPath(path.join(this.assetDirectory, murzAssets.mb.file));
+    }
+    if (image.isEmpty()) throw new Error(murzCopy.errors.missingCat);
+    const size = image.getSize();
+    const alpha = extractAlpha(image.toBitmap({ scaleFactor: 1 }), size.width, size.height);
+    if (!alpha.alpha.some(value => value === 0) || !alpha.alpha.some(value => value > 200)) {
+      throw new Error(murzCopy.errors.invalidCat);
+    }
+    return alpha;
+  }
 
   private onPointer = (event: IpcMainEvent): void => {
     if (this.authorized(event) && !this.nativeShape && this.window.isVisible()) this.samplePointer();
   };
 
   private onRendererError = (event: IpcMainEvent): void => {
-    if (this.authorized(event)) this.fail('Не удалось загрузить изображение Мурза.');
+    if (this.authorized(event)) this.fail(murzCopy.errors.renderer);
   };
 
   private scheduleReflow = (): void => {
@@ -197,7 +236,7 @@ export class MurzWindow {
     this.state.invalidate();
     this.reflowTimer = setTimeout(() => {
       try { this.reflow(true); }
-      catch (error) { this.fail(String(error)); }
+      catch (error) { console.error(error); this.fail(murzCopy.errors.renderer); }
     }, 100);
   };
 
@@ -208,7 +247,8 @@ export class MurzWindow {
     this.window.hide();
     this.setIgnoring(true);
     this.state.invalidate();
-    this.layout = calculateLayout(screen.getPrimaryDisplay().workArea, this.alpha, true);
+    this.layout = { ...calculateLayout(screen.getPrimaryDisplay().workArea, this.alpha, true),
+      outline: murzAssets[this.presentation.asset].outline ? 1 : 0 };
     this.mask = makeInputMask(this.alpha, this.layout);
     this.window.setBounds(this.layout.window, false);
     this.nativeShape = false;
@@ -226,7 +266,7 @@ export class MurzWindow {
       }
     }
     clearTimeout(this.readyTimer);
-    this.readyTimer = setTimeout(() => this.fail('Окно Мурза не завершило загрузку.'), 15000);
+    this.readyTimer = setTimeout(() => this.fail(murzCopy.errors.loading), 15000);
     if (notify) this.window.webContents.send(IPC.layout, this.snapshot());
   }
 
@@ -251,7 +291,7 @@ export class MurzWindow {
     this.failed = true;
     this.dismiss();
     console.error(message);
-    dialog.showErrorBox('MurzHelps', message);
+    dialog.showErrorBox(murzCopy.brand, message);
     app.quit();
   }
 }

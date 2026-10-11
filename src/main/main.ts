@@ -11,6 +11,7 @@ import { bindTimerView } from './timer-view';
 import { SettingsStore } from './settings';
 import { SettingsWindow } from './settings-window';
 import { BreakWarning } from './warning';
+import { murzCopy } from '../shared/murz-copy';
 
 let overlay: MurzWindow | undefined;
 let tray: ReturnType<typeof createTray> | undefined;
@@ -26,9 +27,8 @@ if (squirrelStartup) {
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.setName('MurzHelps');
-  // The old manual summon is a full, timed break in v0.2.
-  app.on('second-instance', () => timer?.startBreakNow());
+  app.setName(murzCopy.brand);
+  app.on('second-instance', () => settingsWindow?.show());
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
     if (quitting) return;
@@ -45,26 +45,27 @@ if (squirrelStartup) {
   void app.whenReady().then(async () => {
     configureApplication();
     Menu.setApplicationMenu(process.platform === 'darwin'
-      ? Menu.buildFromTemplate([{ label: 'MurzHelps', submenu: [{ role: 'quit', label: 'Quit MurzHelps' }] }])
+      ? Menu.buildFromTemplate([{ label: murzCopy.brand, submenu: [{ role: 'quit', label: murzCopy.tray.quit }] }])
       : null);
     const assets = path.join(app.getAppPath(), 'assets');
     const store = new SettingsStore(app.getPath('userData'));
     const settings = await store.load();
     if (quitting) return;
     timer = new BreakTimer(settings);
-    overlay = new MurzWindow(assets, id => timer?.dismissBreak(id));
+    overlay = new MurzWindow(assets, id => timer?.dismissBreak(id), id => timer?.snooze(id));
     subscriptions.push(bindTimerView(timer, overlay), bindPowerEvents(powerMonitor, timer));
     settingsWindow = new SettingsWindow(store, settings => timer?.configure(settings));
-    warning = new BreakWarning(timer);
+    warning = new BreakWarning(timer, assets);
     runtime = new TimerRuntime(timer);
     runtime.start();
     // Keep the Tray strongly referenced while the window is hidden.
     tray = createTray(assets, timer, () => settingsWindow?.show(), () => app.quit());
     await overlay.load();
+    if (!quitting) timer.startAutomatically();
   }).catch(error => {
     console.error(error);
     overlay?.dispose();
-    dialog.showErrorBox('MurzHelps — ошибка запуска', String(error));
+    dialog.showErrorBox(murzCopy.errors.startup, murzCopy.errors.startupBody);
     app.quit();
   });
 }

@@ -18,6 +18,7 @@ const bridge: MurzBridge = {
     return () => ipcRenderer.removeListener(IPC.timer, listener);
   },
   dismiss: intervalId => ipcRenderer.send(IPC.dismiss, intervalId),
+  snooze: intervalId => ipcRenderer.send(IPC.snooze, intervalId),
   pointerMoved: () => ipcRenderer.send(IPC.pointer),
   reportError: () => ipcRenderer.send(IPC.error),
 };

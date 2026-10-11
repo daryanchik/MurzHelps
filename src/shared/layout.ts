@@ -39,39 +39,48 @@ function calculateBaseLayout(area: Rect, image: Size): OverlayLayout {
 export function calculateLayout(area: Rect, image: Size, withInfo = false): OverlayLayout {
   const base = calculateBaseLayout(area, image);
   if (!withInfo) return base;
-  const margin = 16, gap = 12;
-  const catRight = base.window.x + base.cat.x + base.cat.width;
-  const sideWidth = Math.min(280, Math.floor(area.x + area.width - margin - catRight - gap));
-  if (sideWidth >= 220) {
-    // Preserve the v0.1 cat and button in exactly the same screen coordinates.
-    const height = 128;
-    const top = Math.max(area.y + margin, Math.min(base.window.y + base.cat.y + 12, area.y + area.height - height - margin));
-    const info = { x: catRight + gap - base.window.x, y: top - base.window.y, width: sideWidth, height };
-    return { ...base,
-      window: { ...base.window, width: info.x + info.width, height: Math.max(base.window.height, info.y + info.height) },
-      info,
-    };
-  }
-  // Compact screens: put functional text above the existing button and photo.
-  const width = Math.min(320, area.width - margin * 2);
-  const infoHeight = 128, buttonHeight = 44, controlsHeight = infoHeight + 8 + buttonHeight + gap;
-  const scale = Math.min(area.width * 0.76 / image.width,
-    Math.max(1, area.height - margin * 2 - controlsHeight) / image.height);
-  const catWidth = Math.max(1, Math.round(image.width * scale));
-  const catHeight = Math.max(1, Math.round(image.height * scale));
-  const windowWidth = Math.max(width, catWidth);
-  const height = controlsHeight + catHeight;
+  // Compare side-by-side and stacked layouts, choosing the largest uncropped cat.
+  // Two DIP inside the window reserve room for the silhouette outline.
+  const padding = 2, margin = 8, gap = 12;
+  const width = Math.floor(area.width - margin * 2), height = Math.floor(area.height - margin * 2);
+  const panelHeight = Math.min(296, height);
+  const sideWidth = Math.min(288, Math.max(184, Math.floor(width * 0.28)));
+  const topWidth = Math.min(320, width - padding * 2);
+  const topHeight = Math.min(296, Math.max(164, Math.floor(height * 0.38)));
+  const sideScale = Math.min((width - sideWidth - gap - padding * 2) / image.width,
+    (height - padding * 2) / image.height);
+  const topScale = Math.min((width - padding * 2) / image.width,
+    (height - topHeight - gap - padding * 2) / image.height);
+  const side = sideScale >= topScale;
+  const scale = Math.max(1 / Math.max(image.width, image.height), side ? sideScale : topScale);
+  const catWidth = Math.max(1, Math.floor(image.width * scale));
+  const catHeight = Math.max(1, Math.floor(image.height * scale));
+  const panelWidth = side ? sideWidth : topWidth;
+  const cardHeight = side ? panelHeight : topHeight;
+  const windowWidth = side ? catWidth + panelWidth + gap + padding * 2 : Math.max(catWidth, panelWidth) + padding * 2;
+  const windowHeight = side ? Math.max(catHeight + padding * 2, cardHeight) : catHeight + cardHeight + gap + padding * 2;
+  const info = {
+    x: side ? catWidth + gap + padding * 2 : Math.floor((windowWidth - panelWidth) / 2),
+    y: side ? Math.floor((windowHeight - cardHeight) / 2) : 0,
+    width: panelWidth, height: cardHeight,
+  };
+  const buttonHeight = cardHeight < 220 ? 30 : 36;
+  const inset = 12;
   return {
     window: {
       x: Math.round(area.x + (area.width - windowWidth) / 2),
-      y: Math.max(area.y + 4, Math.min(
-        Math.round(area.y + area.height * 0.54 - catHeight / 2 - controlsHeight),
-        area.y + area.height - height - 4)),
-      width: windowWidth, height,
+      y: Math.round(area.y + (area.height - windowHeight) / 2),
+      width: windowWidth, height: windowHeight,
     },
-    cat: { x: Math.floor((windowWidth - catWidth) / 2), y: controlsHeight, width: catWidth, height: catHeight },
-    button: { x: Math.floor((windowWidth - 188) / 2), y: infoHeight + 8, width: 188, height: buttonHeight },
-    buttonRadius: 22,
-    info: { x: Math.floor((windowWidth - width) / 2), y: 0, width, height: infoHeight },
+    cat: {
+      x: side ? padding : Math.floor((windowWidth - catWidth) / 2),
+      y: side ? Math.floor((windowHeight - catHeight) / 2) : cardHeight + gap + padding,
+      width: catWidth, height: catHeight,
+    },
+    button: { x: info.x + inset, y: info.y + cardHeight - inset - buttonHeight * 2 - 6,
+      width: panelWidth - inset * 2, height: buttonHeight },
+    snooze: { x: info.x + inset, y: info.y + cardHeight - inset - buttonHeight,
+      width: panelWidth - inset * 2, height: buttonHeight },
+    info, infoRadius: 14, buttonRadius: 8,
   };
 }

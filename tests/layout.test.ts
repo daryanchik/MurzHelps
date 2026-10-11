@@ -47,10 +47,10 @@ test('invalid geometry fails instead of creating an unusable overlay', () => {
 });
 
 for (const area of [...displays, { x: -100, y: 0, width: 240, height: 200 }]) {
-  test(`break text fits without overlapping cat or button on ${area.width}x${area.height}`, () => {
+  test(`visit card and both buttons fit without overlapping cat on ${area.width}x${area.height}`, () => {
     const layout = calculateLayout(area, photo, true);
-    const { window, cat, button, info } = layout;
-    assert.ok(info);
+    const { window, cat, button, snooze, info } = layout;
+    assert.ok(info); assert.ok(snooze);
     assert.ok(window.x >= area.x && window.y >= area.y);
     assert.ok(window.x + window.width <= area.x + area.width);
     assert.ok(window.y + window.height <= area.y + area.height);
@@ -58,20 +58,24 @@ for (const area of [...displays, { x: -100, y: 0, width: 240, height: 200 }]) {
     const overlap = (a: typeof cat, b: typeof cat) => a.x < b.x + b.width && a.x + a.width > b.x
       && a.y < b.y + b.height && a.y + a.height > b.y;
     assert.equal(overlap(cat, info), false);
-    assert.equal(overlap(button, info), false);
+    assert.equal(overlap(button, snooze), false);
+    assert.equal(overlap(cat, snooze), false);
+    for (const control of [button, snooze]) {
+      assert.ok(control.x >= info.x && control.y >= info.y);
+      assert.ok(control.x + control.width <= info.x + info.width && control.y + control.height <= info.y + info.height);
+    }
     assert.equal(overlap(cat, button), false);
-    for (const rect of [cat, button, info]) {
+    for (const rect of [cat, button, snooze, info]) {
       assert.ok(rect.x >= 0 && rect.y >= 0);
       assert.ok(rect.x + rect.width <= window.width && rect.y + rect.height <= window.height);
     }
   });
 }
-test('normal desktop keeps v0.1 photo size and absolute position with the timer added', () => {
-  for (const area of displays.slice(0, 3)) {
-    const old = calculateLayout(area, photo), current = calculateLayout(area, photo, true);
-    assert.deepEqual(current.cat, old.cat);
-    assert.equal(current.window.x, old.window.x);
-    assert.equal(current.window.y, old.window.y);
-    assert.deepEqual(current.button, old.button);
-  }
+test('portrait uses nearly full available height and landscape picks the better orientation', () => {
+  const area = { x: 0, y: 24, width: 1440, height: 876 };
+  const portrait = calculateLayout(area, photo, true);
+  assert.ok(portrait.cat.height >= area.height - 22);
+  const landscape = calculateLayout(area, { width: 2000, height: 600 }, true);
+  assert.ok(landscape.cat.width >= area.width - 22);
+  assert.ok(landscape.info!.y + landscape.info!.height < landscape.cat.y);
 });

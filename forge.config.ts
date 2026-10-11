@@ -5,7 +5,7 @@ import path from 'node:path';
 import { readFileSync } from 'node:fs';
 
 const exec = promisify(execFile);
-const { version } = JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as { version: string };
+const { version, description } = JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as { version: string; description: string };
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
@@ -35,7 +35,7 @@ const config: ForgeConfig = {
       config: {
         name: 'MurzHelps',
         authors: 'MurzHelps',
-        description: 'Murz has decided that your break has started.',
+        description,
         setupExe: `MurzHelps-${version}-Setup.exe`,
         setupIcon: path.resolve('assets/icon.ico'),
         noMsi: true,
