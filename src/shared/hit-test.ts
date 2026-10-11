@@ -56,6 +56,13 @@ export function makeInputMask(source: AlphaRaster, layout: OverlayLayout): Input
       if (roundedContains(button, layout.buttonRadius, { x: x + 0.5, y: y + 0.5 })) pixels[y * width + x] = 1;
     }
   }
+  // This box is opaque UI, so it belongs to the same native input region.
+  if (layout.info) {
+    const info = layout.info;
+    for (let y = info.y; y < info.y + info.height; y++) {
+      for (let x = info.x; x < info.x + info.width; x++) pixels[y * width + x] = 1;
+    }
+  }
   return { width, height, pixels };
 }
 

@@ -18,3 +18,8 @@ body { user-select: none; -webkit-user-select: none; }
 }
 #dismiss:hover { background: #fffdf7; border-color: #b9b2a6; }
 #dismiss:active { background: #e7e1d6; }
+#dismiss:disabled { cursor: default; }
+#break-info { position: absolute; padding: 8px 10px; background: #f7f4ed; color: #25241f; font-size: 13px; line-height: 18px; }
+#remaining { display: block; font-size: 22px; line-height: 26px; font-variant-numeric: tabular-nums; }
+#pause-status { height: 16px; line-height: 16px; font-size: 12px; }
+#break-info p { margin: 4px 0 0; font-size: 12px; line-height: 16px; }

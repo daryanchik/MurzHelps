@@ -5,6 +5,8 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { buildSync } from 'esbuild';
 import { IPC } from '../src/shared/types';
+import { BreakTimer } from '../src/main/timer';
+import { bindTimerView } from '../src/main/timer-view';
 
 // Exercise the actual main-process controller without claiming an OS GUI test.
 const code = buildSync({ entryPoints: ['src/main/window.ts'], bundle: true, platform: 'node', format: 'cjs', external: ['electron'], write: false }).outputFiles[0].text;
@@ -70,37 +72,42 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false) {
     setInterval: (callback: () => void) => { const id = {}; intervals.set(id, callback); return id; },
     clearInterval: (id: object) => intervals.delete(id),
   });
-  const controller = new module.exports.MurzWindow('/app/assets');
+  const timer = new BreakTimer(undefined, () => 0);
+  const controller = new module.exports.MurzWindow('/app/assets', (id: number) => timer.dismissBreak(id));
+  bindTimerView(timer, controller);
   const window: FakeWindow = controller.window;
   const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
   const snapshot = () => ipc.handlers.get(IPC.getLayout)!(event) as any;
   const ready = () => ipc.emit(IPC.ready, event, snapshot().revision);
+  const summon = () => { timer.startBreakNow(); ready(); };
   const advance = (ms: number) => {
     for (const [id, timer] of [...timeouts]) if (timer.ms === ms) { timeouts.delete(id); timer.callback(); }
   };
-  return { controller, window, event, ipc, snapshot, ready, screen, display, cursor, intervals, timeouts, power, advance, quit: () => quit };
+  return { controller, timer, summon, window, event, ipc, snapshot, ready, screen, display, cursor, intervals, timeouts, power, advance, quit: () => quit };
 }
 
 test('actual controller blocks early display; dismissal and summon reuse the same window', t => {
   const h = harness('darwin'); t.after(() => h.controller.dispose());
   assert.equal(h.window.visible, false);
   h.ready();
+  assert.equal(h.window.visible, false, 'v0.2 launches IDLE, including after renderer readiness');
+  h.summon();
   assert.equal(h.window.visible, true);
   assert.equal(h.intervals.size, 1);
   h.ready();
   assert.equal(h.intervals.size, 1, 'duplicate ready cannot create another poller');
-  h.ipc.emit(IPC.dismiss, h.event);
+  h.ipc.emit(IPC.dismiss, h.event, h.timer.snapshot().intervalId);
   assert.equal(h.window.visible, false);
   assert.equal(h.intervals.size, 0);
   assert.equal(h.window.ignored, true);
-  h.controller.summon();
+  h.timer.startBreakNow();
   assert.equal(h.window.visible, false);
   h.ready();
   assert.equal(h.window.visible, true);
 });
 test('macOS controller switches input using real screen coordinates and the alpha mask', t => {
   const h = harness('darwin'); t.after(() => h.controller.dispose());
-  h.ready();
+  h.summon();
   assert.equal(h.window.ignored, true);
   const { cat } = h.snapshot().layout;
   h.cursor.x = h.window.bounds.x + cat.x + cat.width / 2;
@@ -115,7 +122,7 @@ test('macOS controller switches input using real screen coordinates and the alph
 test('Windows uses a native input region; fallback remains functional if the API fails', t => {
   for (const shapeFails of [false, true]) {
     const h = harness('win32', shapeFails); t.after(() => h.controller.dispose());
-    h.ready();
+    h.summon();
     assert.ok(h.window.shapes[0].length > 0);
     assert.equal(h.window.visible, true);
     assert.equal(h.intervals.size, shapeFails ? 1 : 0);
@@ -124,7 +131,7 @@ test('Windows uses a native input region; fallback remains functional if the API
 });
 test('monitor changes reject stale layouts and do not show a dismissed cat', t => {
   const h = harness('darwin'); t.after(() => h.controller.dispose());
-  h.ready();
+  h.summon();
   const oldRevision = h.snapshot().revision;
   h.display.workArea.x = 400;
   h.screen.emit('display-removed');
@@ -138,18 +145,19 @@ test('monitor changes reject stale layouts and do not show a dismissed cat', t =
   h.screen.emit('display-added'); h.advance(100);
   assert.equal(h.window.visible, false);
 });
-test('untrusted IPC cannot dismiss the overlay or read layout', t => {
-  const h = harness('darwin'); t.after(() => h.controller.dispose()); h.ready();
+test('untrusted IPC cannot dismiss the overlay or read layout/timer', t => {
+  const h = harness('darwin'); t.after(() => h.controller.dispose()); h.summon();
   const forged = { sender: {}, senderFrame: {} };
-  h.ipc.emit(IPC.dismiss, forged);
+  h.ipc.emit(IPC.dismiss, forged, h.timer.snapshot().intervalId);
   assert.equal(h.window.visible, true);
   assert.throws(() => h.ipc.handlers.get(IPC.getLayout)!(forged));
+  assert.throws(() => h.ipc.handlers.get(IPC.getTimer)!(forged));
   const subframe = { sender: h.window.webContents, senderFrame: {} };
-  h.ipc.emit(IPC.dismiss, subframe);
+  h.ipc.emit(IPC.dismiss, subframe, h.timer.snapshot().intervalId);
   assert.equal(h.window.visible, true);
 });
 test('renderer failure releases the workspace; quit cleanup removes timers and listeners', () => {
-  const h = harness('darwin'); h.ready();
+  const h = harness('darwin'); h.summon();
   h.window.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
   assert.equal(h.window.visible, false);
   assert.equal(h.window.ignored, true);
@@ -159,4 +167,17 @@ test('renderer failure releases the workspace; quit cleanup removes timers and l
   assert.equal(h.timeouts.size, 0);
   assert.equal(h.ipc.handlers.size, 0);
   assert.equal(h.screen.listenerCount('display-removed'), 0);
+});
+
+test('dismissal token prevents late IPC from dismissing a newer break', t => {
+  const h = harness('darwin'); t.after(() => h.controller.dispose()); h.summon();
+  const oldId = h.timer.snapshot().intervalId;
+  h.ipc.emit(IPC.dismiss, h.event, oldId);
+  assert.equal(h.timer.snapshot().phase, 'WORKING');
+  h.summon();
+  for (const invalid of [oldId, undefined, '3', NaN, Infinity]) h.ipc.emit(IPC.dismiss, h.event, invalid);
+  assert.equal(h.window.visible, true);
+  assert.equal(h.timer.snapshot().phase, 'BREAK');
+  h.timer.pause(); assert.equal(h.window.visible, true);
+  h.timer.stop(); assert.equal(h.window.visible, false);
 });

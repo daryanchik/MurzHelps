@@ -1,7 +1,7 @@
 {
   "name": "murzhelps",
   "productName": "MurzHelps",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Murz has decided that your break has started.",
   "author": "MurzHelps",
   "private": true,
@@ -37,7 +37,7 @@
     "esbuild": "0.28.2",
     "playwright": "1.56.1",
     "pngjs": "7.0.0",
-    "sharp": "^0.35.5",
+    "sharp": "0.34.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
   }

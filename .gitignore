@@ -5,4 +5,12 @@ test-results/
 *.log
 .DS_Store
 Thumbs.db
-
+node_modules/
+out/
+dist/
+.forge/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log

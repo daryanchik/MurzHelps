@@ -2,8 +2,10 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const exec = promisify(execFile);
+const { version } = JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as { version: string };
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
@@ -11,7 +13,7 @@ const config: ForgeConfig = {
     executableName: 'MurzHelps',
     appBundleId: 'app.murzhelps.desktop',
     appCategoryType: 'public.app-category.productivity',
-    icon: path.resolve('assets/icon'),
+    icon: "./assets/icons/murz-icon",
     extendInfo: { LSUIElement: true, NSHighResolutionCapable: true },
     // Bundles contain all runtime code. Never ship sources, tests or build tools.
     ignore: file => (Boolean(file)
@@ -33,7 +35,7 @@ const config: ForgeConfig = {
         name: 'MurzHelps',
         authors: 'MurzHelps',
         description: 'Murz has decided that your break has started.',
-        setupExe: 'MurzHelps-0.1.0-Setup.exe',
+        setupExe: `MurzHelps-${version}-Setup.exe`,
         setupIcon: path.resolve('assets/icon.ico'),
         noMsi: true,
       },

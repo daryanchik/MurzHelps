@@ -13,8 +13,14 @@ await mkdir('dist/renderer', { recursive: true });
 await Promise.all([
   build({ entryPoints: ['src/main/main.ts'], outfile: 'dist/main/main.cjs', platform: 'node', format: 'cjs', target: 'node22', bundle: true, external: ['electron'], sourcemap: true }),
   build({ entryPoints: ['src/preload/preload.ts'], outfile: 'dist/preload/preload.cjs', platform: 'node', format: 'cjs', target: 'node22', bundle: true, external: ['electron'], sourcemap: true }),
+  build({ entryPoints: ['src/preload/settings-preload.ts'], outfile: 'dist/preload/settings-preload.cjs', platform: 'node', format: 'cjs', target: 'node22', bundle: true, external: ['electron'], sourcemap: true }),
   build({ entryPoints: ['src/renderer/renderer.ts'], outfile: 'dist/renderer/renderer.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
+  build({ entryPoints: ['src/renderer/settings.ts'], outfile: 'dist/renderer/settings.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
+  build({ entryPoints: ['src/renderer/warning.ts'], outfile: 'dist/renderer/warning.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
   copyFile('src/renderer/index.html', 'dist/renderer/index.html'),
   copyFile('src/renderer/styles.css', 'dist/renderer/styles.css'),
+  copyFile('src/renderer/settings.html', 'dist/renderer/settings.html'),
+  copyFile('src/renderer/settings.css', 'dist/renderer/settings.css'),
+  copyFile('src/renderer/warning.html', 'dist/renderer/warning.html'),
 ]);
 console.log('Built main, sandboxed preload, and renderer.');

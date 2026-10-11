@@ -74,3 +74,11 @@ test('scanline rectangles preserve every hole and every body pixel', () => {
 test('full rectangle compresses into one native region', () => {
   assert.deepEqual(maskToRectangles({ width: 200, height: 300, pixels: new Uint8Array(60000).fill(1) }), [{ x: 0, y: 0, width: 200, height: 300 }]);
 });
+test('visible timer panel receives input but its transparent gap still passes clicks', () => {
+  const withInfo = { ...layout, window: { ...layout.window, width: 10 },
+    info: { x: 7, y: 0, width: 3, height: 6 } };
+  const mask = makeInputMask(ring, withInfo);
+  assert.equal(hitScreenPoint(mask, withInfo.window, { x: -1192, y: 27 }), true);
+  assert.equal(hitScreenPoint(mask, withInfo.window, { x: -1194, y: 27 }), false);
+  assert.equal(hitScreenPoint(mask, withInfo.window, { x: -1198, y: 28 }), false);
+});

@@ -7,6 +7,7 @@ import type { AlphaRaster, InputMask } from '../shared/hit-test';
 import { IPC, type LayoutSnapshot, type OverlayLayout } from '../shared/types';
 import { VisibilityState } from '../shared/visibility';
 import { configureOverlay } from './platform';
+import { idleSnapshot, type TimerSnapshot } from '../shared/timer-state';
 
 export class MurzWindow {
   readonly window: BrowserWindow;
@@ -21,8 +22,10 @@ export class MurzWindow {
   private readyTimer?: ReturnType<typeof setTimeout>;
   private disposed = false;
   private failed = false;
+  private timerState = idleSnapshot();
 
-  constructor(assetDirectory: string) {
+  constructor(assetDirectory: string, private readonly onDismissRequest: (intervalId: number) => void) {
+    this.state.dismiss(); // v0.2 always launches hidden in IDLE.
     const image = nativeImage.createFromPath(path.join(assetDirectory, 'murz.png'));
     if (image.isEmpty()) throw new Error('assets/murz.png is missing or invalid');
     const size = image.getSize();
@@ -86,6 +89,10 @@ export class MurzWindow {
       if (!this.authorized(event)) throw new Error('Unexpected IPC sender');
       return this.snapshot();
     });
+    ipcMain.handle(IPC.getTimer, event => {
+      if (!this.authorized(event)) throw new Error('Unexpected IPC sender');
+      return this.timerState;
+    });
     ipcMain.on(IPC.ready, this.onReady);
     ipcMain.on(IPC.dismiss, this.onDismiss);
     ipcMain.on(IPC.pointer, this.onPointer);
@@ -100,6 +107,11 @@ export class MurzWindow {
 
   async load(): Promise<void> {
     await this.window.loadFile(path.join(__dirname, '../renderer/index.html'));
+  }
+
+  setTimerSnapshot(snapshot: TimerSnapshot): void {
+    this.timerState = snapshot;
+    if (!this.disposed && !this.window.isDestroyed()) this.window.webContents.send(IPC.timer, snapshot);
   }
 
   summon(): void {
@@ -124,6 +136,7 @@ export class MurzWindow {
     clearTimeout(this.reflowTimer);
     clearTimeout(this.readyTimer);
     ipcMain.removeHandler(IPC.getLayout);
+    ipcMain.removeHandler(IPC.getTimer);
     ipcMain.off(IPC.ready, this.onReady);
     ipcMain.off(IPC.dismiss, this.onDismiss);
     ipcMain.off(IPC.pointer, this.onPointer);
@@ -157,8 +170,11 @@ export class MurzWindow {
     if (!this.nativeShape) this.polling = setInterval(() => this.samplePointer(), 8);
   };
 
-  private onDismiss = (event: IpcMainEvent): void => {
-    if (this.authorized(event)) this.dismiss();
+  private onDismiss = (event: IpcMainEvent, intervalId: unknown): void => {
+    if (this.authorized(event) && typeof intervalId === 'number' && Number.isSafeInteger(intervalId)
+        && this.timerState.phase === 'BREAK' && this.timerState.intervalId === intervalId) {
+      this.onDismissRequest(intervalId);
+    }
   };
 
   private onPointer = (event: IpcMainEvent): void => {
@@ -192,7 +208,7 @@ export class MurzWindow {
     this.window.hide();
     this.setIgnoring(true);
     this.state.invalidate();
-    this.layout = calculateLayout(screen.getPrimaryDisplay().workArea, this.alpha);
+    this.layout = calculateLayout(screen.getPrimaryDisplay().workArea, this.alpha, true);
     this.mask = makeInputMask(this.alpha, this.layout);
     this.window.setBounds(this.layout.window, false);
     this.nativeShape = false;

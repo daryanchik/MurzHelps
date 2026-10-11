@@ -29,7 +29,11 @@ try {
     }
     throw new Error(`Window visibility never became ${expected}`);
   };
+  await waitVisible(false);
+  assert.equal((await page.evaluate(() => window.murz.getTimer())).phase, 'IDLE');
+  await app.evaluate(({ app: mainApp }) => mainApp.emit('second-instance', {}, [], process.cwd()));
   await waitVisible(true);
+  assert.equal((await page.evaluate(() => window.murz.getTimer())).phase, 'BREAK');
   const properties = await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
     return {
@@ -59,10 +63,19 @@ try {
   for (let i = 0; i < 3; i++) {
     await page.locator('#dismiss').dispatchEvent('click');
     await waitVisible(false);
+    assert.equal((await page.evaluate(() => window.murz.getTimer())).phase, 'WORKING');
     await app.evaluate(({ app: mainApp }) => mainApp.emit('second-instance', {}, [], process.cwd()));
     await waitVisible(true);
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
   }
+  await app.evaluate(({ powerMonitor }) => powerMonitor.emit('suspend'));
+  const frozen = await page.evaluate(() => window.murz.getTimer());
+  assert.equal(frozen.paused, true);
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  assert.equal((await page.evaluate(() => window.murz.getTimer())).remainingMs, frozen.remainingMs);
+  await waitVisible(true);
+  await app.evaluate(({ powerMonitor }) => powerMonitor.emit('resume'));
+  assert.equal((await page.evaluate(() => window.murz.getTimer())).paused, false);
   const oldRevision = await page.evaluate(async () => (await window.murz.getLayout()).revision);
   await app.evaluate(({ screen }) => screen.emit('display-metrics-changed', {}, screen.getPrimaryDisplay(), ['scaleFactor']));
   await page.waitForFunction(async revision => (await window.murz.getLayout()).revision > revision, oldRevision);

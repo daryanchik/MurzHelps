@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MurzHelps — Settings</title>
+  <link rel="stylesheet" href="settings.css">
+  <script src="settings.js" defer></script>
+</head>
+<body>
+  <h1>Настройки таймера</h1>
+  <p>Изменения действуют со следующего полного интервала. Текущий отсчёт сохраняется.</p>
+  <form id="settings" novalidate>
+    <label for="workMinutes">Работа, минут (1–240)</label>
+    <input id="workMinutes" name="workMinutes" type="number" min="1" max="240" step="1" required aria-describedby="work-error">
+    <small id="work-error"></small>
+    <label for="breakMinutes">Перерыв, минут (1–120)</label>
+    <input id="breakMinutes" name="breakMinutes" type="number" min="1" max="120" step="1" required aria-describedby="break-error">
+    <small id="break-error"></small>
+    <label for="warningMinutes">Предупредить за, минут (0–15; 0 — отключено)</label>
+    <input id="warningMinutes" name="warningMinutes" type="number" min="0" max="15" step="1" required aria-describedby="warning-error">
+    <small id="warning-error"></small>
+    <div id="message" role="status" aria-live="polite"></div>
+    <div class="actions"><button id="cancel" type="button">Закрыть</button><button id="save" type="submit" disabled>Сохранить</button></div>
+  </form>
+</body>
+</html>

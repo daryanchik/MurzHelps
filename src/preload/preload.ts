@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type LayoutSnapshot, type MurzBridge } from '../shared/types';
+import type { TimerSnapshot } from '../shared/timer-state';
 
 // The renderer receives no Node, filesystem, general-purpose IPC, or Electron API.
 const bridge: MurzBridge = {
@@ -10,7 +11,13 @@ const bridge: MurzBridge = {
     return () => ipcRenderer.removeListener(IPC.layout, listener);
   },
   ready: revision => ipcRenderer.send(IPC.ready, revision),
-  dismiss: () => ipcRenderer.send(IPC.dismiss),
+  getTimer: () => ipcRenderer.invoke(IPC.getTimer),
+  onTimer: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: TimerSnapshot) => callback(snapshot);
+    ipcRenderer.on(IPC.timer, listener);
+    return () => ipcRenderer.removeListener(IPC.timer, listener);
+  },
+  dismiss: intervalId => ipcRenderer.send(IPC.dismiss, intervalId),
   pointerMoved: () => ipcRenderer.send(IPC.pointer),
   reportError: () => ipcRenderer.send(IPC.error),
 };

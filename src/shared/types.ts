@@ -1,3 +1,5 @@
+import type { SettingsSaveResult, SettingsSnapshot, TimerSettings, TimerSnapshot } from './timer-state';
+
 export interface Size { width: number; height: number }
 export interface Point { x: number; y: number }
 export interface Rect extends Point, Size {}
@@ -8,6 +10,7 @@ export interface OverlayLayout {
   cat: Rect;
   button: Rect;
   buttonRadius: number;
+  info?: Rect;
 }
 
 export interface LayoutSnapshot {
@@ -19,9 +22,17 @@ export interface MurzBridge {
   getLayout(): Promise<LayoutSnapshot>;
   onLayout(callback: (snapshot: LayoutSnapshot) => void): () => void;
   ready(revision: number): void;
-  dismiss(): void;
+  getTimer(): Promise<TimerSnapshot>;
+  onTimer(callback: (snapshot: TimerSnapshot) => void): () => void;
+  dismiss(intervalId: number): void;
   pointerMoved(): void;
   reportError(): void;
+}
+
+export interface SettingsBridge {
+  get(): Promise<SettingsSnapshot>;
+  save(settings: TimerSettings): Promise<SettingsSaveResult>;
+  close(): void;
 }
 
 export const IPC = {
@@ -31,4 +42,10 @@ export const IPC = {
   dismiss: 'murz:dismiss',
   pointer: 'murz:pointer',
   error: 'murz:renderer-error',
+  getTimer: 'murz:get-timer',
+  timer: 'murz:timer',
+  getSettings: 'murz:get-settings',
+  saveSettings: 'murz:save-settings',
+  closeSettings: 'murz:close-settings',
 } as const;
+

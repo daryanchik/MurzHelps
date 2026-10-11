@@ -45,3 +45,33 @@ test('invalid geometry fails instead of creating an unusable overlay', () => {
   assert.throws(() => calculateLayout(displays[0], { width: 0, height: 100 }));
   assert.throws(() => calculateLayout({ ...displays[0], x: NaN }, photo));
 });
+
+for (const area of [...displays, { x: -100, y: 0, width: 240, height: 200 }]) {
+  test(`break text fits without overlapping cat or button on ${area.width}x${area.height}`, () => {
+    const layout = calculateLayout(area, photo, true);
+    const { window, cat, button, info } = layout;
+    assert.ok(info);
+    assert.ok(window.x >= area.x && window.y >= area.y);
+    assert.ok(window.x + window.width <= area.x + area.width);
+    assert.ok(window.y + window.height <= area.y + area.height);
+    assert.ok(Math.abs(cat.width - cat.height * photo.width / photo.height) <= 1);
+    const overlap = (a: typeof cat, b: typeof cat) => a.x < b.x + b.width && a.x + a.width > b.x
+      && a.y < b.y + b.height && a.y + a.height > b.y;
+    assert.equal(overlap(cat, info), false);
+    assert.equal(overlap(button, info), false);
+    assert.equal(overlap(cat, button), false);
+    for (const rect of [cat, button, info]) {
+      assert.ok(rect.x >= 0 && rect.y >= 0);
+      assert.ok(rect.x + rect.width <= window.width && rect.y + rect.height <= window.height);
+    }
+  });
+}
+test('normal desktop keeps v0.1 photo size and absolute position with the timer added', () => {
+  for (const area of displays.slice(0, 3)) {
+    const old = calculateLayout(area, photo), current = calculateLayout(area, photo, true);
+    assert.deepEqual(current.cat, old.cat);
+    assert.equal(current.window.x, old.window.x);
+    assert.equal(current.window.y, old.window.y);
+    assert.deepEqual(current.button, old.button);
+  }
+});

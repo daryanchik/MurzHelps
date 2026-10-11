@@ -1,0 +1,11 @@
+:root { color-scheme: light dark; font: 14px/1.4 system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { padding: 18px 22px; margin: 0; }
+h1 { font-size: 19px; margin: 0 0 10px; }
+p { margin: 0 0 16px; }
+label, input, small { display: block; }
+input { width: 100%; font: inherit; padding: 5px 8px; }
+small { color: light-dark(#a12020, #ffa6a6); min-height: 21px; }
+#message { min-height: 40px; font-size: 12px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; }
+button { font: inherit; padding: 6px 14px; }
