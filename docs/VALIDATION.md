@@ -20,7 +20,7 @@
 | `git diff --check` | Успешно |
 | Версия и зависимости | `package.json`, корневой lockfile и его корневой пакет согласованы: 0.2.0; зависимости не изменены |
 | GitHub Releases | Доступна предварительная v0.1.0; v0.2.0 не создан. Кнопки используют реальный список Releases, без выдуманного asset URL |
-| GitHub Actions | Workflow подготовлен; результат запуска фиксируется ниже после появления CI |
+| GitHub Actions | [CI №5](https://github.com/daryanchik/MurzHelps/actions/runs/38154953402) для коммита `da8a1a3` прошёл: чистый `npm ci`, `npm run check`, `npm run check:web`; сборка установщиков и браузеры пропущены согласно настройкам |
 | GitHub Pages | Workflow подготовлен для `web/` и `main`; сайт в этой работе не публиковался |
 | Подпись / notarization | Не настроены |
 
@@ -60,6 +60,8 @@
 | `docs/VALIDATION.md` | Этот отчёт |
 
 Новых зависимостей нет. `package-lock.json` не изменён. `node_modules/`, `out/`, `dist/`, логи и скриншоты не включены в Git.
+
+Изменения сохранены в [Pull Request №1](https://github.com/daryanchik/MurzHelps/pull/1), без merge. Ветка `main` осталась на `e24a161`. Последующее обновление этого отчёта меняет только документацию, проверенный код остаётся тем же.
 
 SHA-256 `assets/murz.png`:
 
