@@ -56,9 +56,15 @@ try {
       }
       await page.setViewportSize({ width: 1440, height: 1000 });
       assert.equal(await page.locator('link[rel="icon"]').getAttribute('href'), './assets/murz-icon.png');
-      for (const link of await page.locator('[data-download-link]').all()) {
-        assert.equal(await link.getAttribute('href'), 'https://github.com/daryanchik/MurzHelps/releases');
-      }
+      assert.equal(
+        await page.locator('[data-release-link]').getAttribute('href'),
+        'https://github.com/daryanchik/MurzHelps/releases'
+      );
+
+      assert.equal(
+        await page.locator('[data-download-link]').getAttribute('href'),
+        'https://github.com/daryanchik/MurzHelps/releases/download/v0.3.0/MurzHelps.dmg'
+      );
       assert.equal(await page.locator('[data-repo-link]').getAttribute('href'), 'https://github.com/daryanchik/MurzHelps');
       const transform = await page.locator('.murz-video').evaluate(el => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform);

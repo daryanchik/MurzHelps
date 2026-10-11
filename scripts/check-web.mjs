@@ -21,7 +21,8 @@ for (const url of urls) {
 assert.ok(html.includes('</main>') && html.includes('</body>') && html.includes('</html>'));
 assert.ok(!html.includes('/releases/latest'), 'latest excludes prereleases; use the actual releases listing');
 assert.ok(!html.includes('/releases/download/'), 'do not invent an installer URL before publication');
-assert.equal((html.match(/data-download-link/g) || []).length, 2);
+assert.equal((html.match(/data-download-link/g) || []).length, 1);
+assert.equal((html.match(/data-release-link/g) || []).length, 1);
 assert.ok(html.includes('href="https://github.com/daryanchik/MurzHelps"'));
 assert.ok(html.includes('href="./assets/murz-icon.png"'));
 // The published site may describe an earlier release than the desktop sources.
