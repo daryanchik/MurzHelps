@@ -1,12 +1,27 @@
-# MurzHelps
 
-**Productivity, supervised.**
+<table>
+<tr>
+<td width="250" valign="top">
+  <img src="assets/murz-shirt.png" width="240" alt="Murz">
+</td>
+<td valign="middle">
 
-Meet Murz. Your hardworking colleague.
+<h1>MurzHelps</h1>
 
-Murz helps you stay productive.
+<p><strong>Productivity, supervised.</strong></p>
+
+<p>Meet Murz. Your hardworking colleague.</p>
+
+<p>
+Murz helps you stay productive.<br>
 His methods are unconventional.
+</p>
 
-**Download, install, and see for yourself.**
+<p><strong>Download, install, and see for yourself.</strong></p>
 
-[Get Murz](https://github.com/daryanchik/MurzHelps/releases/latest) · [Website](https://daryanchik.github.io/MurzHelps/)
+<a href="https://github.com/daryanchik/MurzHelps/releases/latest">Get Murz</a> ·
+<a href="https://daryanchik.github.io/MurzHelps/">Website</a>
+
+</td>
+</tr>
+</table>
