@@ -3,7 +3,7 @@
 // Repository links remain valid before and after the v0.2.0 release.
 const SITE = Object.freeze({
   repositoryUrl: "https://github.com/daryanchik/MurzHelps",
-downloadUrl: "https://github.com/daryanchik/MurzHelps/releases/download/v0.3.1/MurzHelps.dmg",                    // Empty = open the repository's releases listing (includes prereleases).
+downloadUrl: "https://github.com/daryanchik/MurzHelps/releases/latest/download/MurzHelps.dmg",                    // Empty = open the repository's releases listing (includes prereleases).
   catImage: "./assets/murz-hero.png",
 });
 
