@@ -9,12 +9,21 @@ export const murzAssets = {
   mw: { file: 'mw.png', outline: true },
 } as const;
 
-export type MurzAssetId = keyof typeof murzAssets;
-export type ShortMurzAssetId = Exclude<MurzAssetId, 'mb' | 'mw'>;
+export type ShortMurzAssetId = `ms${number}`;
+export type WarningMurzAssetId = 'mw' | `mw${number}`;
+export type MurzAssetId = 'mb' | ShortMurzAssetId | WarningMurzAssetId | 'murz-shirt';
 export const shortMurzAssets = Object.keys(murzAssets).filter(
   (id): id is ShortMurzAssetId => id !== 'mb' && id !== 'mw',
 );
 export interface MurzPresentation { asset: MurzAssetId; message: string }
+
+/** Derive only controlled basenames, never renderer-provided paths. */
+export function murzAsset(id: MurzAssetId): { file: string; outline: boolean } {
+  if (id === 'mb') return murzAssets.mb;
+  if (id === 'mw' || /^(ms|mw)[1-9]\d*$/.test(id)) return { file: `${id}.png`, outline: true };
+  if (id === 'murz-shirt') return { file: `${id}.png`, outline: true };
+  return murzAssets.mb;
+}
 
 export function selectShortAsset(available: readonly ShortMurzAssetId[], previous?: MurzAssetId,
   random = Math.random): MurzAssetId {

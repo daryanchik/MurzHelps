@@ -3,6 +3,7 @@ import { copyFile, mkdir, rm, access } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateAppIcons } from './prepare-icons.mjs';
+import { buildNative } from './build-native.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
@@ -12,6 +13,8 @@ for (const file of ['murz.png', 'tray.png', 'tray@2x.png', 'trayTemplate.png', '
 }
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist/renderer', { recursive: true });
+const option = (name, fallback) => process.argv.find(arg => arg.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
+await buildNative(root, option('platform', process.platform), option('arch', process.arch));
 await Promise.all([
   build({ entryPoints: ['src/main/main.ts'], outfile: 'dist/main/main.cjs', platform: 'node', format: 'cjs', target: 'node22', bundle: true, external: ['electron'], sourcemap: true }),
   build({ entryPoints: ['src/preload/preload.ts'], outfile: 'dist/preload/preload.cjs', platform: 'node', format: 'cjs', target: 'node22', bundle: true, external: ['electron'], sourcemap: true }),
@@ -19,6 +22,10 @@ await Promise.all([
   build({ entryPoints: ['src/renderer/renderer.ts'], outfile: 'dist/renderer/renderer.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
   build({ entryPoints: ['src/renderer/settings.ts'], outfile: 'dist/renderer/settings.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
   build({ entryPoints: ['src/renderer/warning.ts'], outfile: 'dist/renderer/warning.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
+  ...['passive', 'work-timer'].map(name => build({ entryPoints: [`src/preload/${name}-preload.ts`], outfile: `dist/preload/${name}-preload.cjs`, platform: 'node', format: 'cjs', target: 'node22', bundle: true, external: ['electron'], sourcemap: true })),
+  build({ entryPoints: ['src/renderer/work-timer.ts'], outfile: 'dist/renderer/work-timer.js', platform: 'browser', format: 'iife', target: 'chrome130', bundle: true, sourcemap: true }),
+  copyFile('src/renderer/work-timer.html', 'dist/renderer/work-timer.html'),
+  copyFile('src/renderer/work-timer.css', 'dist/renderer/work-timer.css'),
   copyFile('src/renderer/index.html', 'dist/renderer/index.html'),
   copyFile('src/renderer/styles.css', 'dist/renderer/styles.css'),
   copyFile('src/renderer/settings.html', 'dist/renderer/settings.html'),

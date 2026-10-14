@@ -13,10 +13,11 @@ export interface TimerSettings {
   longEvery: number;
   autoStart: boolean;
   warningMinutes: number;
+  showWorkTimer?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Readonly<TimerSettings> = Object.freeze({
-  workMinutes: 30, shortMinutes: 5, longMinutes: 15, longEvery: 4, warningMinutes: 5, autoStart: true,
+  workMinutes: 30, shortMinutes: 5, longMinutes: 15, longEvery: 4, warningMinutes: 5, autoStart: true, showWorkTimer: false,
 });
 
 export interface TimerSnapshot {
@@ -33,6 +34,13 @@ export interface TimerSnapshot {
   paused: boolean;
   pauseReasons: PauseReason[];
   settings: TimerSettings;
+  cycleId?: number;
+}
+
+export interface TimerEvent {
+  type: 'reset' | 'cycle-started' | 'work-skipped' | 'dismiss' | 'snooze' | 'visit-finished' | 'cycles-skipped';
+  snapshot: TimerSnapshot;
+  natural?: boolean;
 }
 
 export type SettingsErrors = Partial<Record<keyof TimerSettings, string>>;
@@ -57,6 +65,7 @@ export function validateSettings(input: unknown): SettingsValidation {
     }
   }
   if (typeof record.autoStart !== 'boolean') errors.autoStart = murzCopy.errors.boolean;
+  if (record.showWorkTimer !== undefined && typeof record.showWorkTimer !== 'boolean') errors.showWorkTimer = murzCopy.errors.boolean;
   if (!errors.workMinutes && !errors.warningMinutes && (record.warningMinutes as number) > (record.workMinutes as number)) {
     errors.warningMinutes = murzCopy.errors.warningRange;
   }
@@ -68,6 +77,7 @@ export function validateSettings(input: unknown): SettingsValidation {
     longEvery: record.longEvery as number,
     autoStart: record.autoStart as boolean,
     warningMinutes: record.warningMinutes as number,
+    showWorkTimer: record.showWorkTimer === true,
   } };
 }
 

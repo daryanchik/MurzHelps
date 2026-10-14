@@ -46,6 +46,10 @@ fields.autoStart = autoStart;
 errors.autoStart = document.querySelector('#autoStart-error')!;
 document.querySelector('#autoStart-label')!.textContent = murzCopy.settings.fields.autoStart;
 document.querySelector('#autoStart-hint')!.textContent = murzCopy.settings.autoStartHint;
+const showWorkTimer = document.querySelector<HTMLInputElement>('#showWorkTimer')!;
+fields.showWorkTimer = showWorkTimer;
+errors.showWorkTimer = document.querySelector('#showWorkTimer-error')!;
+document.querySelector('#showWorkTimer-label')!.textContent = murzCopy.settings.fields.showWorkTimer;
 const keys = Object.keys(fields) as (keyof TimerSettings)[];
 function showErrors(values: SettingsErrors = {}): void {
   for (const key of keys) {
@@ -56,6 +60,7 @@ function showErrors(values: SettingsErrors = {}): void {
 void window.murzSettings.get().then(snapshot => {
   for (const [key] of definitions) fields[key].value = String(snapshot.settings[key]);
   autoStart.checked = snapshot.settings.autoStart;
+  showWorkTimer.checked = snapshot.settings.showWorkTimer === true;
   for (const key of keys) fields[key].disabled = false;
   message.textContent = snapshot.loadWarning ?? '';
   save.disabled = false;
@@ -64,7 +69,7 @@ cancel.addEventListener('click', () => window.murzSettings.close());
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (save.disabled) return;
-  const input = { ...Object.fromEntries(definitions.map(([key]) => [key, fields[key].valueAsNumber])), autoStart: autoStart.checked };
+  const input = { ...Object.fromEntries(definitions.map(([key]) => [key, fields[key].valueAsNumber])), autoStart: autoStart.checked, showWorkTimer: showWorkTimer.checked };
   const checked = validateSettings(input);
   if (!checked.ok) { showErrors(checked.errors); message.textContent = murzCopy.errors.checkFields; return; }
   showErrors();

@@ -9,6 +9,7 @@ const { version, description } = JSON.parse(readFileSync(path.resolve('package.j
 const config: ForgeConfig = {
   packagerConfig: {
   asar: true,
+  extraResource: [path.resolve('dist/native')],
 osxSign: {
   identity: '-',
   identityValidation: false,
@@ -26,6 +27,8 @@ osxSign: {
     ignore: file => (Boolean(file)
       && !/^\/(dist(?:\/|$)|assets(?:\/|$)|package\.json$)/.test(file))
       || /^\/assets\/(source|icons)(?:\/|$)/.test(file)
+      || /^\/assets\/murz-eats2?\.png$/.test(file)
+      || /^\/dist\/native(?:\/|$)/.test(file)
       || file === '/assets/icon.svg',
     prune: false,
   },
@@ -52,8 +55,8 @@ osxSign: {
     { name: '@electron-forge/maker-zip', platforms: ['linux'], config: {} },
   ],
   hooks: {
-    generateAssets: async () => {
-      const { stdout } = await exec(process.execPath, [path.resolve('scripts/build.mjs')]);
+    generateAssets: async (_config, platform, arch) => {
+      const { stdout } = await exec(process.execPath, [path.resolve('scripts/build.mjs'), `--platform=${platform}`, `--arch=${arch}`]);
       process.stdout.write(stdout);
     },
   },

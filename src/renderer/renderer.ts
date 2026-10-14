@@ -1,5 +1,5 @@
 import { formatRemaining, isVisit, idleSnapshot, type TimerSnapshot } from '../shared/timer-state';
-import { murzAssets } from '../shared/murz-assets';
+import { murzAsset } from '../shared/murz-assets';
 import { murzCopy } from '../shared/murz-copy';
 import type { LayoutSnapshot, MurzBridge, Rect } from '../shared/types';
 
@@ -15,6 +15,7 @@ const message = document.querySelector<HTMLElement>('#message')!;
 let latestRevision = -1, timerRevision = -1;
 let displayedInterval: number | null = null;
 let pendingAction: number | null = null;
+let visitMessage = '';
 let timerState: TimerSnapshot = idleSnapshot();
 document.title = murzCopy.brand;
 image.alt = murzCopy.catAlt;
@@ -26,10 +27,13 @@ function place(element: HTMLElement, rect: Rect): void {
   Object.assign(element.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` });
 }
 function updateButtons(): void {
-  const disabled = !isVisit(timerState.phase) || displayedInterval !== timerState.intervalId || pendingAction === timerState.intervalId;
+  const disabled = !isVisit(timerState.phase) || displayedInterval !== timerState.intervalId
+    || pendingAction === timerState.intervalId || timerState.pauseReasons.some(reason => reason === 'lock' || reason === 'sleep');
+  dismiss.textContent = murzCopy.buttons.dismiss;
   dismiss.disabled = disabled;
   snooze.disabled = disabled || timerState.snoozeUsed;
   snooze.textContent = timerState.snoozeUsed ? murzCopy.buttons.snoozeUsed : murzCopy.buttons.snooze;
+  message.textContent = visitMessage;
 }
 async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
   if (snapshot.revision <= latestRevision) return;
@@ -37,7 +41,7 @@ async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
   displayedInterval = null;
   updateButtons();
   try {
-    const asset = murzAssets[snapshot.presentation.asset];
+    const asset = murzAsset(snapshot.presentation.asset);
     const src = new URL(`../../assets/${asset.file}`, location.href).href;
     if (image.src !== src) image.src = src;
     await image.decode();
@@ -53,7 +57,7 @@ async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
     }
     info.style.borderRadius = `${snapshot.layout.infoRadius ?? 0}px`;
     dismiss.style.borderRadius = snooze.style.borderRadius = `${snapshot.layout.buttonRadius}px`;
-    message.textContent = snapshot.presentation.message;
+    visitMessage = snapshot.presentation.message;
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     if (snapshot.revision !== latestRevision) return;
     displayedInterval = snapshot.intervalId;

@@ -21,10 +21,13 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false, available: Sh
     handle(name: string, callback: (event: unknown) => unknown) { this.handlers.set(name, callback); },
     removeHandler(name: string) { this.handlers.delete(name); },
   });
-  const display = { workArea: { x: -320, y: 20, width: 320, height: 240 } };
+  const display = { id: 2, scaleFactor: 2, workArea: { x: -320, y: 20, width: 320, height: 240 } };
+  const primary = { id: 1, scaleFactor: 1, workArea: { x: 0, y: 0, width: 1440, height: 900 } };
   const cursor = { x: -1000, y: -1000 };
   const screen = Object.assign(new EventEmitter(), {
-    getPrimaryDisplay: () => display,
+    getPrimaryDisplay: () => primary,
+    getAllDisplays: () => [primary, display],
+    getDisplayNearestPoint: () => display,
     getCursorScreenPoint: () => cursor,
   });
   const power = new EventEmitter();
@@ -42,12 +45,15 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false, available: Sh
       send: (channel: string, payload: any) => this.sent.push({ channel, payload }),
     });
     constructor(readonly options: any) { super(); }
-    setMenu() {} setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {}
+    level: unknown[] = []; workspaces: unknown[] = [];
+    setMenu() {} moveTop() {}
+    setAlwaysOnTop(...args: unknown[]) { this.level = args; }
+    setVisibleOnAllWorkspaces(...args: unknown[]) { this.workspaces = args; }
     setIgnoreMouseEvents(ignore: boolean) { this.ignored = ignore; }
     isDestroyed() { return false; }
     isVisible() { return this.visible; }
     hide() { this.visible = false; this.emit('hide'); }
-    showInactive() { this.visible = true; }
+    showInactive() { this.visible = true; this.emit('show'); }
     setBounds(bounds: typeof this.bounds) { this.bounds = { ...bounds }; }
     getBounds() { return this.bounds; }
     setShape(rects: unknown[]) {
@@ -224,4 +230,40 @@ test('switching photos rebuilds both the displayed asset and the native alpha in
 test('missing short photos use murz.png without adding a second outline', t => {
   const h = harness('darwin'); t.after(() => h.controller.dispose()); h.summon();
   assert.equal(h.snapshot().presentation.asset, 'mb'); assert.equal(h.snapshot().layout.outline, 0);
+});
+
+test('repeated dismissals always finish the visit and expose no refusal IPC or punishment state', t => {
+  const h = harness('darwin', false, ['ms1', 'ms2']); t.after(() => h.controller.dispose());
+  for (let i = 0; i < 16; i++) {
+    h.summon();
+    const id = h.timer.snapshot().intervalId;
+    assert.equal(h.window.visible, true);
+    h.ipc.emit(IPC.dismiss, h.event, id);
+    const next = h.timer.snapshot();
+    assert.equal(next.phase, 'WORKING');
+    assert.equal(h.window.visible, false);
+    assert.equal('visitSuppressed' in next, false);
+    assert.equal('punishment' in next, false);
+    h.ipc.emit(IPC.dismiss, h.event, id);
+    assert.deepEqual(h.timer.snapshot(), next);
+    assert.equal(h.timeouts.size, 0);
+  }
+  assert.equal(h.ipc.listenerCount('murz:protest'), 0);
+  assert.equal(h.ipc.listenerCount('murz:reject-punishment-snooze'), 0);
+  assert.equal(h.ipc.listenerCount('murz:passive-motion-done'), 0);
+});
+
+test('main overlay retains nonactivating fullscreen flags and the secondary display in DIP', t => {
+  const h = harness('darwin'); t.after(() => h.controller.dispose()); h.summon();
+  assert.deepEqual(h.window.level, [true, 'pop-up-menu']);
+  assert.equal(h.window.workspaces[0], true);
+  assert.equal((h.window.workspaces[1] as any).visibleOnFullScreen, true);
+  assert.equal((h.window.workspaces[1] as any).skipTransformProcessType, true);
+  assert.equal(h.window.options.focusable, false);
+  assert.equal(h.window.options.type, 'panel');
+  assert.equal(h.window.options.webPreferences.sandbox, true);
+  assert.equal(h.window.options.webPreferences.contextIsolation, true);
+  assert.equal(h.window.options.webPreferences.nodeIntegration, false);
+  assert.ok(h.window.bounds.x >= h.display.workArea.x && h.window.bounds.x < 0);
+  assert.ok(h.window.bounds.width <= h.display.workArea.width);
 });

@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { DEFAULT_SETTINGS, validateSettings, isVisit, SNOOZE_MS } from '../shared/timer-state';
-import type { PauseReason, VisitKind, TimerPhase, TimerSettings, TimerSnapshot } from '../shared/timer-state';
+import type { PauseReason, VisitKind, TimerPhase, TimerSettings, TimerSnapshot, TimerEvent } from '../shared/timer-state';
 
 const MINUTE = 60_000;
 type Listener = (snapshot: TimerSnapshot) => void;
@@ -29,6 +29,9 @@ export class BreakTimer {
   private settings: TimerSettings;
   private lastNow = -Infinity;
   private lastPublished = '';
+  private cycleId = 0;
+  private readonly events: TimerEvent[] = [];
+  private readonly eventListeners = new Set<(event: TimerEvent, current: TimerSnapshot) => void>();
 
   constructor(settings: TimerSettings = { ...DEFAULT_SETTINGS }, private readonly clock = () => performance.now()) {
     const checked = validateSettings(settings);
@@ -38,6 +41,14 @@ export class BreakTimer {
 
   subscribe(listener: Listener): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   onWarning(listener: Listener): () => void { this.warnings.add(listener); return () => { this.warnings.delete(listener); }; }
+  onEvent(listener: (event: TimerEvent, current: TimerSnapshot) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => { this.eventListeners.delete(listener); };
+  }
+
+  private record(type: TimerEvent['type'], at: number, natural?: boolean): void {
+    this.events.push({ type, snapshot: this.makeSnapshot(at), natural });
+  }
 
   snapshot(): TimerSnapshot { return this.makeSnapshot(this.now()); }
 
@@ -58,6 +69,7 @@ export class BreakTimer {
 
   restartWork(): void {
     const now = this.now();
+    this.record('reset', now);
     this.pauses.delete('user');
     this.beginCycle(now);
     this.advance(now);
@@ -68,6 +80,7 @@ export class BreakTimer {
     const now = this.now();
     this.advance(now);
     if (isVisit(this.phase) || this.phase === 'SNOOZED') { this.publish(now); return; }
+    this.record('work-skipped', now);
     this.pauses.delete('user');
     if (this.phase === 'IDLE') {
       this.workIndex = 0;
@@ -84,7 +97,8 @@ export class BreakTimer {
     this.advance(now);
     if (!this.acceptsVisitCommand(expectedIntervalId)) { this.publish(now); return false; }
     this.pauses.delete('user');
-    this.finishVisit(now);
+    this.record('dismiss', now);
+    this.finishVisit(now, false);
     this.advance(now);
     this.publish(now);
     return true;
@@ -96,17 +110,20 @@ export class BreakTimer {
     if (!this.acceptsVisitCommand(expectedIntervalId) || this.snoozeUsed) { this.publish(now); return false; }
     this.pauses.delete('user');
     this.snoozeUsed = true;
+    this.record('snooze', now);
     this.begin('SNOOZED', now, SNOOZE_MS);
     this.publish(now);
     return true;
   }
 
   private acceptsVisitCommand(id: number): boolean {
-    return Number.isSafeInteger(id) && isVisit(this.phase) && id === this.intervalId;
+    return Number.isSafeInteger(id) && isVisit(this.phase) && id === this.intervalId
+      && !this.pauses.has('sleep') && !this.pauses.has('lock');
   }
 
   stop(): void {
     const now = this.now();
+    this.record('reset', now);
     this.phase = 'IDLE';
     this.visitId = null;
     this.visitKind = null;
@@ -165,10 +182,12 @@ export class BreakTimer {
   }
 
   private beginCycle(at: number): void {
+    this.cycleId++;
     this.workIndex = 1;
     this.cycleLength = this.settings.longEvery;
     this.standalone = false;
     this.beginWork(at);
+    this.record('cycle-started', at);
   }
 
   private beginVisit(at: number, kind: VisitKind): void {
@@ -179,7 +198,8 @@ export class BreakTimer {
     this.begin(kind === 'long' ? 'LONG_VISIT' : 'SHORT_VISIT', at, this.visitDuration);
   }
 
-  private finishVisit(at: number): void {
+  private finishVisit(at: number, natural = true): void {
+    this.record('visit-finished', at, natural);
     if (this.visitKind === 'long' || this.standalone) this.beginCycle(at);
     else { this.workIndex++; this.beginWork(at); }
   }
@@ -199,6 +219,8 @@ export class BreakTimer {
             + (this.cycleLength - 1) * this.settings.shortMinutes + this.settings.longMinutes) * MINUTE;
           const skip = Math.floor((now - boundary) / cycle);
           if (skip > 0) {
+            this.cycleId += skip;
+            this.record('cycles-skipped', now);
             this.deadline = boundary + skip * cycle + this.duration;
             this.intervalId += skip * this.cycleLength * 2;
             this.visitSequence += skip * this.cycleLength;
@@ -239,15 +261,20 @@ export class BreakTimer {
       remainingMs: this.remaining(now), durationMs: this.duration,
       paused: this.phase !== 'IDLE' && this.pauses.size > 0,
       pauseReasons: [...this.pauses].sort(), settings: { ...this.settings },
+      cycleId: this.cycleId,
     };
   }
 
   private publish(now: number): void {
+    // Deliver transitions even when one tick crosses several deadlines.
+    for (const event of this.events.splice(0)) {
+      for (const listener of this.eventListeners) listener(event, this.makeSnapshot(now));
+    }
     const notifyWarning = this.phase === 'WARNING' && !this.pauses.size && !this.warningSent;
     if (notifyWarning) this.warningSent = true;
     const snapshot = this.makeSnapshot(now);
     const key = JSON.stringify([snapshot.phase, snapshot.intervalId, Math.ceil(snapshot.remainingMs / 1000),
-      snapshot.durationMs, snapshot.pauseReasons, snapshot.settings, snapshot.visitId, snapshot.snoozeUsed, snapshot.workIndex, snapshot.cycleLength]);
+      snapshot.durationMs, snapshot.pauseReasons, snapshot.settings, snapshot.visitId, snapshot.snoozeUsed, snapshot.workIndex, snapshot.cycleLength, snapshot.cycleId]);
     if (key !== this.lastPublished) {
       this.lastPublished = key;
       this.revision++;

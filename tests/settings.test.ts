@@ -32,11 +32,11 @@ test('settings save atomically and restore across app launches; sessions are not
   const store = new SettingsStore(directory);
   assert.deepEqual(await store.load(), DEFAULT_SETTINGS);
   assert.equal(store.loadWarning, undefined);
-  const custom = { ...DEFAULT_SETTINGS, workMinutes: 25, shortMinutes: 7, warningMinutes: 3 };
+  const custom = { ...DEFAULT_SETTINGS, workMinutes: 25, shortMinutes: 7, warningMinutes: 3, showWorkTimer: true };
   await store.save(custom);
   assert.deepEqual(await new SettingsStore(directory).load(), custom);
   const json = JSON.parse(await readFile(store.file, 'utf8'));
-  assert.deepEqual(json, { version: 2, settings: custom });
+  assert.deepEqual(json, { version: 3, settings: custom });
   assert.deepEqual(await readdir(directory), ['settings.json']);
 });
 
@@ -97,7 +97,7 @@ test('v0.2 preferences migrate without changing the three saved values', async t
   await writeFile(store.file, JSON.stringify({ version: 1, settings: { workMinutes: 60, breakMinutes: 45, warningMinutes: 0 } }));
   const expected = { ...DEFAULT_SETTINGS, workMinutes: 60, shortMinutes: 45, warningMinutes: 0 };
   assert.deepEqual(await store.load(), expected);
-  assert.deepEqual(JSON.parse(await readFile(store.file, 'utf8')), { version: 2, settings: expected });
+  assert.deepEqual(JSON.parse(await readFile(store.file, 'utf8')), { version: 3, settings: expected });
   assert.deepEqual(await new SettingsStore(directory).load(), expected);
 });
 

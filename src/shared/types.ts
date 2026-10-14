@@ -4,6 +4,17 @@ import type { MurzPresentation } from './murz-assets';
 export interface Size { width: number; height: number }
 export interface Point { x: number; y: number }
 export interface Rect extends Point, Size {}
+export interface WorkTimerGeometry extends Rect { displayId?: number }
+export interface WorkTimerBridge {
+  get(): Promise<TimerSnapshot>;
+  onTimer(callback: (snapshot: TimerSnapshot) => void): () => void;
+  resizeStart(edge: string): void;
+  resizeEnd(): void;
+}
+export interface PassiveCatBridge {
+  ready(width: number, height: number): void;
+  failed(): void;
+}
 
 /** All geometry is in Electron device-independent pixels (DIP), not physical pixels. */
 export interface OverlayLayout {
@@ -55,5 +66,11 @@ export const IPC = {
   getSettings: 'murz:get-settings',
   saveSettings: 'murz:save-settings',
   closeSettings: 'murz:close-settings',
+  passiveReady: 'murz:passive-ready',
+  passiveFailed: 'murz:passive-failed',
+  workTimerGet: 'murz:work-timer-get',
+  workTimerUpdate: 'murz:work-timer-update',
+  workTimerResizeStart: 'murz:work-timer-resize-start',
+  workTimerResizeEnd: 'murz:work-timer-resize-end',
 } as const;
 

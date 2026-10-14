@@ -12,7 +12,8 @@ export function bindTimerView(timer: BreakTimer, view: BreakView): () => void {
   let showing: number | null = null;
   const render = (snapshot: TimerSnapshot) => {
     view.setTimerSnapshot(snapshot);
-    if (isVisit(snapshot.phase)) {
+    if (isVisit(snapshot.phase)
+        && !snapshot.pauseReasons.some(reason => reason === 'sleep' || reason === 'lock')) {
       if (showing !== snapshot.intervalId) view.summon();
       showing = snapshot.intervalId;
     } else {

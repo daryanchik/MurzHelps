@@ -13,7 +13,7 @@ const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex
 test('fresh build regenerates missing app icons from the real photo and leaves the tray unchanged', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'murz-clean-build-'));
   try {
-    for (const folder of ['assets', 'scripts', 'src']) await cp(folder, path.join(dir, folder), { recursive: true });
+    for (const folder of ['assets', 'scripts', 'src', 'native']) await cp(folder, path.join(dir, folder), { recursive: true });
     await symlink(path.resolve('node_modules'), path.join(dir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     const protectedFiles = ['murz.png', 'tray.png', 'tray@2x.png', 'trayTemplate.png', 'trayTemplate@2x.png', 'icons/murz-icon.png'];
     const before = await Promise.all(protectedFiles.map(file => readFile(path.join(dir, 'assets', file)).then(digest)));

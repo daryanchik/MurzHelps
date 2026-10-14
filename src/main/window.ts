@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
-import { murzAssets, shortMurzAssets, type MurzAssetId, type MurzPresentation, type ShortMurzAssetId } from '../shared/murz-assets';
+import { discoverMurzAssets } from './assets';
+import { cursorDisplay, retainedDisplay } from './displays';
+import { murzAssets, murzAsset, type MurzAssetId, type MurzPresentation, type ShortMurzAssetId } from '../shared/murz-assets';
 import { murzCopy } from '../shared/murz-copy';
 import { VisitPresentation } from './visit-presentation';
 import { calculateLayout } from '../shared/layout';
@@ -10,7 +11,7 @@ import { extractAlpha, hitScreenPoint, makeInputMask, maskToRectangles } from '.
 import type { AlphaRaster, InputMask } from '../shared/hit-test';
 import { IPC, type LayoutSnapshot, type OverlayLayout } from '../shared/types';
 import { VisibilityState } from '../shared/visibility';
-import { configureOverlay } from './platform';
+import { configureOverlay, showOverlay, hideOverlay } from './platform';
 import { idleSnapshot, isVisit, type TimerSnapshot } from '../shared/timer-state';
 
 export class MurzWindow {
@@ -29,17 +30,20 @@ export class MurzWindow {
   private disposed = false;
   private failed = false;
   private timerState = idleSnapshot();
+  private displayId?: number;
+  private targetVisit?: number;
 
   constructor(private readonly assetDirectory: string,
     private readonly onDismissRequest: (intervalId: number) => void,
     private readonly onSnoozeRequest: (intervalId: number) => void = () => {},
-    available: readonly ShortMurzAssetId[] = shortMurzAssets.filter(id => existsSync(path.join(assetDirectory, murzAssets[id].file)))) {
+    available: readonly ShortMurzAssetId[] = discoverMurzAssets(assetDirectory).short) {
     this.state.dismiss();
     this.presentations = new VisitPresentation(available);
     this.alpha = this.loadAlpha('mb');
 
     this.window = new BrowserWindow({
       title: murzCopy.brand,
+      ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
       width: 400, height: 400,
       show: false,
       frame: false,
@@ -87,6 +91,12 @@ export class MurzWindow {
     this.window.on('will-move', event => event.preventDefault());
     this.window.on('will-resize', event => event.preventDefault());
     this.window.on('hide', () => this.stopPolling());
+    this.window.on('show', () => {
+      if (this.nativeShape || this.disposed) return;
+      this.stopPolling();
+      this.samplePointer();
+      this.polling = setInterval(() => this.samplePointer(), 8);
+    });
     this.window.on('closed', () => { this.dispose(); app.quit(); });
 
     ipcMain.handle(IPC.getLayout, event => {
@@ -133,7 +143,12 @@ export class MurzWindow {
   summon(): void {
     if (this.disposed || this.failed) return;
     this.state.summon();
-    // Re-read the primary display even if its changes happened while hidden.
+    // Select once per appearance; reflow and wake keep the existing target.
+    const visit = this.timerState.visitId ?? this.timerState.intervalId;
+    if (this.targetVisit !== visit) {
+      this.displayId = cursorDisplay().id;
+      this.targetVisit = visit;
+    }
     this.reflow(true);
   }
 
@@ -142,7 +157,7 @@ export class MurzWindow {
     clearTimeout(this.readyTimer);
     this.stopPolling();
     this.setIgnoring(true);
-    this.window.hide();
+    hideOverlay(this.window);
   }
 
   dispose(): void {
@@ -183,8 +198,7 @@ export class MurzWindow {
     // Resolve the hit-test BEFORE showing; no invisible rectangle on first frame.
     if (this.nativeShape) this.setIgnoring(false);
     else this.samplePointer();
-    this.window.showInactive();
-    if (!this.nativeShape) this.polling = setInterval(() => this.samplePointer(), 8);
+    showOverlay(this.window);
   };
 
   private onDismiss = (event: IpcMainEvent, intervalId: unknown): void => {
@@ -202,7 +216,7 @@ export class MurzWindow {
   };
 
   private loadAlpha(id: MurzAssetId): AlphaRaster {
-    let image = nativeImage.createFromPath(path.join(this.assetDirectory, murzAssets[id].file));
+    let image = nativeImage.createFromPath(path.join(this.assetDirectory, murzAsset(id).file));
     if (image.isEmpty() && id !== 'mb') {
       this.presentation.asset = 'mb';
       image = nativeImage.createFromPath(path.join(this.assetDirectory, murzAssets.mb.file));
@@ -231,7 +245,7 @@ export class MurzWindow {
     if (!this.state.wanted) return;
     clearTimeout(this.readyTimer);
     this.stopPolling();
-    this.window.hide();
+    hideOverlay(this.window);
     this.setIgnoring(true);
     this.state.invalidate();
     this.reflowTimer = setTimeout(() => {
@@ -244,11 +258,13 @@ export class MurzWindow {
     if (this.disposed) return;
     clearTimeout(this.reflowTimer);
     this.stopPolling();
-    this.window.hide();
+    hideOverlay(this.window);
     this.setIgnoring(true);
     this.state.invalidate();
-    this.layout = { ...calculateLayout(screen.getPrimaryDisplay().workArea, this.alpha, true),
-      outline: murzAssets[this.presentation.asset].outline ? 1 : 0 };
+    const display = retainedDisplay(this.displayId);
+    this.displayId = display.id;
+    this.layout = { ...calculateLayout(display.workArea, this.alpha, true),
+      outline: murzAsset(this.presentation.asset).outline ? 1 : 0 };
     this.mask = makeInputMask(this.alpha, this.layout);
     this.window.setBounds(this.layout.window, false);
     this.nativeShape = false;

@@ -1,22 +1,35 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { murzAssets, shortMurzAssets, selectShortAsset } from '../src/shared/murz-assets';
+import { murzAssets, murzAsset, shortMurzAssets, selectShortAsset } from '../src/shared/murz-assets';
+import { discoverMurzAssets } from '../src/main/assets';
+import { readdirSync } from 'node:fs';
 import { murzCopy, randomCopy } from '../src/shared/murz-copy';
 import { VisitPresentation } from '../src/main/visit-presentation';
 import { BreakTimer } from '../src/main/timer';
 import config from '../forge.config';
 import { ShuffleBag } from '../src/shared/shuffle-bag';
 
-test('all seven new assets are runtime paths allowed by the existing package filter', () => {
+test('all discovered photos and the shirt reward retain outlines and are allowed by the package filter', () => {
   const ignore = config.packagerConfig!.ignore as (file: string) => boolean;
   for (const [id, asset] of Object.entries(murzAssets)) {
     assert.equal(ignore(`/assets/${asset.file}`), false);
     assert.equal(asset.outline, id !== 'mb');
   }
-  assert.equal(shortMurzAssets.length, 6);
+  const discovered = discoverMurzAssets('assets');
+  assert.ok(discovered.short.includes('ms7') && discovered.short.includes('ms8'));
+  const ids = [...discovered.short, ...discovered.warning, 'murz-shirt'] as const;
+  for (const id of ids) {
+    const asset = murzAsset(id);
+    assert.equal(asset.outline, true);
+    assert.equal(ignore(`/assets/${asset.file}`), false);
+  }
+  const photos = readdirSync('assets').filter(name => /^(ms\d+|mw\d*)\.png$/.test(name)).sort();
+  assert.deepEqual([...discovered.short, ...discovered.warning].map(id => murzAsset(id).file).sort(), photos);
   assert.equal(murzAssets.mb.file, 'murz.png');
   assert.equal(murzAssets.mw.file, 'mw.png');
   assert.equal(ignore('/assets/source/original.png'), true);
+  assert.equal(ignore('/assets/murz-eats.png'), true);
+  assert.equal(ignore('/assets/murz-eats2.png'), true);
 });
 
 test('short assets do not immediately repeat, including across a long visit', () => {
