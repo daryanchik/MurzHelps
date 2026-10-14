@@ -1,0 +1,35 @@
+
+name: Build Windows v0.4.0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run make -- --platform=win32 --arch=x64
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MurzHelps-0.4.0-Windows-x64
+          path: out/make/squirrel.windows/x64/*Setup.exe
+          if-no-files-found: error
