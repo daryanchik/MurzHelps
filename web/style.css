@@ -253,3 +253,21 @@ em{font-family:var(--serif);font-weight:400;color:var(--blue)}
   transform: translateY(20px) scale(1.065);
   transform-origin: center bottom;
 }
+
+/* Compact platform picker: no outlines or boxes in its resting state. */
+.download-area{width:min(100%,268px)}
+.download-caption{margin:0 0 5px 11px;color:var(--muted);font-size:10px;font-weight:700;letter-spacing:1.55px}
+.platform-picker{width:100%}
+.platform-option{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:45px;padding:8px 11px;border-top:1px solid var(--line);border-radius:5px;background:transparent;color:var(--ink);transition:background-color .17s ease,color .17s ease,border-color .17s ease}
+.platform-option:last-child{border-bottom:1px solid var(--line)}
+.platform-name{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:600;line-height:1.2;white-space:nowrap}
+.platform-arrow{font-size:15px;font-weight:400;line-height:1;transition:transform .17s ease}
+.platform-detail{font-size:10px;color:var(--muted);white-space:nowrap;transition:color .17s ease}
+.platform-option:hover,.platform-option:focus-visible{color:var(--white);background:var(--blue);border-color:var(--blue)}
+.platform-option:hover .platform-detail,.platform-option:focus-visible .platform-detail{color:#dce3f5}
+.platform-option:hover .platform-arrow{transform:translate(2px,2px)}
+.download-area>.micro{margin:10px 0 0 11px;font-size:9px;white-space:nowrap}
+.nav-github-icon{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--line);border-radius:8px;color:var(--ink);transition:background-color .17s ease,color .17s ease,border-color .17s ease}
+.nav-github-icon:hover,.nav-github-icon:focus-visible{color:var(--white);background:var(--blue);border-color:var(--blue)}
+@media(max-width:740px){.header nav .nav-github-icon{display:inline-flex}.download-area{max-width:268px}}
+@media(prefers-reduced-motion:reduce){.platform-option,.platform-arrow,.platform-detail,.nav-github-icon{transition:none}}
