@@ -28,6 +28,7 @@ export class MurzWindow {
   private layout!: OverlayLayout;
   private mask!: InputMask;
   private nativeShape = false;
+  private inputReady = false;
   private shapeApplied = false;
   private shapeUnavailable = false;
   private ignoringMouse = true;
@@ -118,12 +119,7 @@ export class MurzWindow {
     this.window.on('will-move', event => event.preventDefault());
     this.window.on('will-resize', event => event.preventDefault());
     this.window.on('hide', () => this.stopPolling());
-    this.window.on('show', () => {
-      if (this.nativeShape || this.disposed) return;
-      this.stopPolling();
-      this.samplePointer();
-      this.polling = setInterval(() => this.samplePointer(), 8);
-    });
+    this.window.on('show', () => this.activateInput());
     this.window.on('closed', () => { this.dispose(); app.quit(); });
 
     ipcMain.handle(IPC.getLayout, event => {
@@ -199,6 +195,7 @@ export class MurzWindow {
 
   dismiss(): void {
     this.state.dismiss();
+    this.inputReady = false;
     clearTimeout(this.reflowTimer); this.reflowTimer = undefined;
     this.cancelReadyTimer();
     this.stopPolling();
@@ -210,6 +207,7 @@ export class MurzWindow {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.inputReady = false;
     this.stopPolling();
     clearTimeout(this.reflowTimer);
     this.cancelReadyTimer();
@@ -244,13 +242,21 @@ export class MurzWindow {
     this.cancelReadyTimer();
     this.trace('ready-received');
     if (!this.state.shouldShow) return;
-    this.applyNativeShape();
-    if (this.failed) return;
     configureOverlay(this.window);
-    // Resolve the hit-test BEFORE showing; no invisible rectangle on first frame.
-    if (this.nativeShape) this.setIgnoring(false);
-    else this.samplePointer();
-    showOverlay(this.window);
+    if (process.platform === 'win32') {
+      // The PNG has loaded and layout is committed. Show without taking input,
+      // then install the region; fallback polling also starts only after this gate.
+      showOverlay(this.window);
+      this.applyNativeShape();
+      if (this.failed) return;
+      this.inputReady = true;
+      this.activateInput();
+    } else {
+      // Preserve macOS's existing pre-show alpha hit test and nonactivating panel.
+      this.inputReady = true;
+      this.samplePointer();
+      showOverlay(this.window);
+    }
     this.trace('shown');
   };
 
@@ -284,19 +290,19 @@ export class MurzWindow {
   }
 
   private onPointer = (event: IpcMainEvent): void => {
-    if (this.authorized(event) && !this.nativeShape && this.window.isVisible()) this.samplePointer();
+    if (this.authorized(event) && this.inputReady && !this.nativeShape && this.window.isVisible()) this.samplePointer();
   };
 
   private onRendererError = (event: IpcMainEvent, reason: unknown, revision: unknown): void => {
     if (!this.authorized(event) || typeof reason !== 'string'
-      || !['image-decode', 'layout', 'get-layout', 'get-timer', 'script'].includes(reason)) return;
+      || !['image-load', 'image-timeout', 'image-decode', 'layout', 'get-layout', 'get-timer', 'script'].includes(reason)) return;
     if (revision !== this.state.revision && !(revision === -1 && this.state.readyRevision === -1)) return;
-    this.fail(reason === 'image-decode' ? murzCopy.errors.missingCat : murzCopy.errors.renderer, reason);
+    this.fail(reason.startsWith('image-') ? murzCopy.errors.missingCat : murzCopy.errors.renderer, reason);
   };
 
   private onDiagnostic = (event: IpcMainEvent, revision: unknown, stage: unknown): void => {
     if (!this.authorized(event) || revision !== this.state.revision || typeof stage !== 'string'
-      || !['decoding', 'layout-applied', 'ready-sent'].includes(stage) || this.reportedStages.has(stage)) return;
+      || !['image-loading', 'image-loaded', 'decoding', 'layout-applied', 'ready-sent'].includes(stage) || this.reportedStages.has(stage)) return;
     this.reportedStages.add(stage); this.rendererStage = stage;
     this.trace('renderer-progress');
   };
@@ -307,6 +313,7 @@ export class MurzWindow {
     // The next summon recalculates everything when the cat is dismissed.
     if (!this.state.wanted) return;
     this.cancelReadyTimer();
+    this.inputReady = false;
     this.stopPolling();
     hideOverlay(this.window);
     this.setIgnoring(true);
@@ -323,6 +330,7 @@ export class MurzWindow {
   private reflow(notify: boolean): void {
     if (this.disposed || this.failed || (notify && !this.state.wanted)) return;
     clearTimeout(this.reflowTimer);
+    this.inputReady = false;
     this.stopPolling();
     hideOverlay(this.window);
     this.setIgnoring(true);
@@ -396,6 +404,14 @@ export class MurzWindow {
   private samplePointer(): void {
     if (this.disposed || this.window.isDestroyed()) return;
     this.setIgnoring(!hitScreenPoint(this.mask, this.window.getBounds(), screen.getCursorScreenPoint()));
+  }
+
+  private activateInput(): void {
+    if (!this.inputReady || this.disposed || !this.window.isVisible()) return;
+    if (this.nativeShape) { this.setIgnoring(false); return; }
+    this.stopPolling();
+    this.samplePointer();
+    this.polling = setInterval(() => this.samplePointer(), 8);
   }
 
   private setIgnoring(ignore: boolean): void {

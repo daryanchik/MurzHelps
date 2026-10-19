@@ -12,8 +12,10 @@ export interface WorkTimerBridge {
   resizeEnd(): void;
 }
 export interface PassiveCatBridge {
+  readonly imageReadiness: ImageReadiness;
   ready(width: number, height: number): void;
-  failed(): void;
+  failed(reason: ImageFailure | 'layout'): void;
+  diagnostic(stage: RendererStage): void;
 }
 
 /** All geometry is in Electron device-independent pixels (DIP), not physical pixels. */
@@ -35,10 +37,13 @@ export interface LayoutSnapshot {
   intervalId: number;
 }
 
-export type RendererStage = 'decoding' | 'layout-applied' | 'ready-sent';
-export type RendererFailure = 'image-decode' | 'layout' | 'get-layout' | 'get-timer' | 'script';
+export type ImageReadiness = 'load' | 'decode';
+export type ImageFailure = 'image-load' | 'image-decode' | 'image-timeout';
+export type RendererStage = 'image-loading' | 'image-loaded' | 'decoding' | 'layout-applied' | 'ready-sent';
+export type RendererFailure = ImageFailure | 'layout' | 'get-layout' | 'get-timer' | 'script';
 
 export interface MurzBridge {
+  readonly imageReadiness: ImageReadiness;
   getLayout(): Promise<LayoutSnapshot>;
   onLayout(callback: (snapshot: LayoutSnapshot) => void): () => void;
   ready(revision: number): void;
@@ -73,6 +78,7 @@ export const IPC = {
   closeSettings: 'murz:close-settings',
   passiveReady: 'murz:passive-ready',
   passiveFailed: 'murz:passive-failed',
+  passiveDiagnostic: 'murz:passive-diagnostic',
   workTimerGet: 'murz:work-timer-get',
   workTimerUpdate: 'murz:work-timer-update',
   workTimerResizeStart: 'murz:work-timer-resize-start',

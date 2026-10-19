@@ -4,6 +4,7 @@ import type { TimerSnapshot } from '../shared/timer-state';
 
 // The renderer receives no Node, filesystem, general-purpose IPC, or Electron API.
 const bridge: MurzBridge = {
+  imageReadiness: process.platform === 'win32' ? 'load' : 'decode',
   getLayout: () => ipcRenderer.invoke(IPC.getLayout),
   onLayout: callback => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: LayoutSnapshot) => callback(snapshot);

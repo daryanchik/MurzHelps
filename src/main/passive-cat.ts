@@ -4,6 +4,7 @@ import { murzAsset, type MurzAssetId } from '../shared/murz-assets';
 import { IPC } from '../shared/types';
 import { cursorDisplay, retainedDisplay } from './displays';
 import { configureOverlay, desktopIsAvailable, showOverlay } from './platform';
+import { logOverlay } from './overlay-diagnostics';
 
 export type PassiveMode = 'warning' | 'reward';
 interface PassiveOptions {
@@ -13,7 +14,7 @@ interface PassiveOptions {
   duration?: number;
 }
 
-/** One passive composition. Asset decoding is acknowledged before it is shown. */
+/** One passive composition. Image and layout readiness are acknowledged before showing. */
 export class PassiveCat {
   private window?: BrowserWindow;
   private options?: PassiveOptions;
@@ -23,10 +24,12 @@ export class PassiveCat {
   private resolve?: (shown: boolean) => void;
   private phase?: 'loading' | 'visible';
   private disposed = false;
+  private readonly reportedStages = new Set<string>();
 
   constructor(private readonly assets: string) {
     ipcMain.on(IPC.passiveReady, this.ready);
     ipcMain.on(IPC.passiveFailed, this.failed);
+    ipcMain.on(IPC.passiveDiagnostic, this.diagnostic);
     screen.on('display-added', this.reposition);
     screen.on('display-removed', this.reposition);
     screen.on('display-metrics-changed', this.reposition);
@@ -71,13 +74,13 @@ export class PassiveCat {
     win.webContents.on('unresponsive', () => { if (this.window === win) this.fail(); });
     win.once('closed', () => { if (this.window === win) this.fail(); });
     const result = new Promise<boolean>(resolve => { this.resolve = resolve; });
-    this.loading = setTimeout(() => this.fail(), 8000);
+    this.loading = setTimeout(() => { if (this.window === win) this.fail('renderer-timeout'); }, 8000);
     void win.loadFile(path.join(__dirname, '../renderer/warning.html'), { query: {
       mode: options.mode, asset: options.asset, message: options.message,
       imageHeight: String(Math.min(options.mode === 'reward' ? 330 : 195, area.height * .45)),
       availableHeight: String(height),
       availableWidth: String(width), scaleFactor: String(display.scaleFactor),
-    } }).catch(error => { console.warn('Passive cat failed:', error); if (this.window === win) this.fail(); });
+    } }).catch(() => { if (this.window === win) this.fail('html-load'); });
     return result;
   }
 
@@ -87,6 +90,7 @@ export class PassiveCat {
     this.resolve?.(false); this.resolve = undefined;
     const win = this.window;
     this.window = undefined; this.options = undefined; this.phase = undefined;
+    this.reportedStages.clear();
     if (win && !win.isDestroyed()) win.destroy();
   }
 
@@ -95,6 +99,7 @@ export class PassiveCat {
     this.clear();
     ipcMain.off(IPC.passiveReady, this.ready);
     ipcMain.off(IPC.passiveFailed, this.failed);
+    ipcMain.off(IPC.passiveDiagnostic, this.diagnostic);
     screen.off('display-added', this.reposition);
     screen.off('display-removed', this.reposition);
     screen.off('display-metrics-changed', this.reposition);
@@ -125,8 +130,18 @@ export class PassiveCat {
     if (this.options?.duration) this.timeout = setTimeout(() => this.clear(), this.options!.duration);
   }
 
-  private failed = (event: IpcMainEvent): void => { if (this.authorized(event)) this.fail(); };
-  private fail(): void {
+  private diagnostic = (event: IpcMainEvent, stage: unknown): void => {
+    if (!this.authorized(event) || typeof stage !== 'string' || this.reportedStages.has(stage)
+      || !['image-loading', 'image-loaded', 'decoding', 'layout-applied', 'ready-sent'].includes(stage)) return;
+    this.reportedStages.add(stage);
+    logOverlay('passive-progress', { stage, asset: this.options!.asset, phase: this.phase ?? 'loading' });
+  };
+  private failed = (event: IpcMainEvent, reason: unknown): void => {
+    if (this.authorized(event) && typeof reason === 'string'
+      && ['image-load', 'image-timeout', 'image-decode', 'layout'].includes(reason)) this.fail(reason);
+  };
+  private fail(reason = 'passive-window'): void {
+    if (this.options) logOverlay('passive-failed', { reason, asset: this.options.asset, phase: this.phase ?? 'loading' });
     this.clear();
   }
   private reposition = (): void => {

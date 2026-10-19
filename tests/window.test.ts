@@ -352,6 +352,32 @@ test('shape is applied only after matching ready and its native duration is diag
   assert.ok(applied && applied.count > 0 && applied.count <= 4096 && applied.elapsedMs >= 0);
 });
 
+test('Windows stays click-through until loaded image readiness, showing, and region setup finish', t => {
+  for (const shapeFails of [false, true]) {
+    const h = harness('win32', shapeFails); t.after(() => h.controller.dispose());
+    const setShape = h.window.setShape.bind(h.window);
+    h.window.setShape = rects => {
+      assert.equal(h.window.visible, true);
+      assert.equal(h.window.ignored, true, 'native region setup must not claim desktop input');
+      setShape(rects);
+    };
+    h.window.on('show', () => {
+      assert.equal(h.window.ignored, true);
+      assert.equal(h.intervals.size, 0, 'fallback cannot start before image readiness');
+    });
+    h.timer.startBreakNow();
+    h.ipc.emit(IPC.diagnostic, h.event, h.snapshot().revision, 'layout-applied');
+    h.ipc.emit(IPC.diagnostic, h.event, h.snapshot().revision, 'image-loading');
+    assert.equal(h.window.visible, false); assert.equal(h.window.ignored, true);
+    const { button } = h.snapshot().layout;
+    h.cursor.x = h.window.bounds.x + button.x + button.width / 2;
+    h.cursor.y = h.window.bounds.y + button.y + button.height / 2;
+    h.ready();
+    assert.equal(h.window.visible, true); assert.equal(h.window.ignored, false);
+    h.timer.stop(); assert.equal(h.window.visible, false); assert.equal(h.window.ignored, true);
+  }
+});
+
 test('Windows fallback passes transparent pixels, retains buttons, and never leaves a hidden input rectangle', t => {
   for (const unavailable of [false, true]) {
     const h = harness('win32', !unavailable); t.after(() => h.controller.dispose());

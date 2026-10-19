@@ -2,6 +2,7 @@ import { formatRemaining, isVisit, idleSnapshot, type TimerSnapshot } from '../s
 import { murzAsset } from '../shared/murz-assets';
 import { murzCopy } from '../shared/murz-copy';
 import type { LayoutSnapshot, MurzBridge, Rect, RendererFailure } from '../shared/types';
+import { ImagePreparationError, prepareImage } from './image-ready';
 
 declare global { interface Window { murz: MurzBridge } }
 const image = document.querySelector<HTMLImageElement>('#murz')!;
@@ -16,6 +17,7 @@ let latestRevision = -1, timerRevision = -1;
 let displayedInterval: number | null = null;
 let pendingAction: number | null = null;
 let visitMessage = '';
+let preparingImage: AbortController | undefined;
 let timerState: TimerSnapshot = idleSnapshot();
 document.title = murzCopy.brand;
 image.alt = murzCopy.catAlt;
@@ -38,18 +40,14 @@ function updateButtons(): void {
 async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
   if (snapshot.revision <= latestRevision) return;
   latestRevision = snapshot.revision;
+  preparingImage?.abort();
+  const preparation = preparingImage = new AbortController();
   displayedInterval = null;
   updateButtons();
-  let failure: RendererFailure = 'image-decode';
+  let failure: RendererFailure = 'layout';
   try {
     const asset = murzAsset(snapshot.presentation.asset);
     const src = new URL(`../../assets/${asset.file}`, location.href).href;
-    if (image.src !== src) image.src = src;
-    window.murz.diagnostic(snapshot.revision, 'decoding');
-    await image.decode();
-    if (snapshot.revision !== latestRevision) return;
-    if (!image.naturalWidth || !image.naturalHeight) throw new Error('Empty decoded image');
-    failure = 'layout';
     image.classList.toggle('outlined', asset.outline);
     place(image, snapshot.layout.cat);
     place(dismiss, snapshot.layout.button);
@@ -62,17 +60,22 @@ async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
     info.style.borderRadius = `${snapshot.layout.infoRadius ?? 0}px`;
     dismiss.style.borderRadius = snooze.style.borderRadius = `${snapshot.layout.buttonRadius}px`;
     visitMessage = snapshot.presentation.message;
-    displayedInterval = snapshot.intervalId;
-    updateButtons();
     // Force layout, not painting: hidden native windows may not receive frames.
-    // decode() above and this geometry read finish the preparation before ready.
     const rect = image.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) throw new Error('Empty image layout');
     window.murz.diagnostic(snapshot.revision, 'layout-applied');
+    failure = 'image-load';
+    await prepareImage(image, src, window.murz.imageReadiness, preparation.signal,
+      stage => window.murz.diagnostic(snapshot.revision, stage));
+    if (snapshot.revision !== latestRevision || preparation.signal.aborted) return;
+    displayedInterval = snapshot.intervalId;
+    updateButtons();
     window.murz.diagnostic(snapshot.revision, 'ready-sent');
     window.murz.ready(snapshot.revision);
-  } catch {
-    if (snapshot.revision === latestRevision) window.murz.reportError(failure, snapshot.revision);
+  } catch (error) {
+    if (snapshot.revision === latestRevision && !preparation.signal.aborted) {
+      window.murz.reportError(error instanceof ImagePreparationError ? error.reason : failure, snapshot.revision);
+    }
   }
 }
 function applyTimer(snapshot: TimerSnapshot): void {
@@ -91,6 +94,7 @@ window.murz.onTimer(applyTimer);
 void window.murz.getTimer().then(applyTimer).catch(() => window.murz.reportError('get-timer', latestRevision));
 window.addEventListener('error', () => window.murz.reportError('script', latestRevision));
 window.addEventListener('unhandledrejection', () => window.murz.reportError('script', latestRevision));
+window.addEventListener('pagehide', () => preparingImage?.abort());
 for (const [button, action] of [[dismiss, 'dismiss'], [snooze, 'snooze']] as const) {
   button.addEventListener('click', () => {
     if (button.disabled || !isVisit(timerState.phase) || pendingAction === timerState.intervalId) return;

@@ -1,6 +1,7 @@
 import { murzAsset, type MurzAssetId } from '../shared/murz-assets';
 import { murzCopy } from '../shared/murz-copy';
 import type { PassiveCatBridge } from '../shared/types';
+import { ImagePreparationError, prepareImage } from './image-ready';
 
 declare global { interface Window { murzPassive: PassiveCatBridge } }
 const params = new URLSearchParams(location.search);
@@ -14,7 +15,7 @@ document.title = murzCopy.brand;
 message.textContent = params.get('message') ?? murzCopy.states.WARNING;
 image.alt = murzCopy.catAlt;
 image.classList.toggle('outlined', asset.outline);
-image.src = `../../assets/${asset.file}`;
+const preparation = new AbortController();
 
 function layout(): void {
   if (!image.naturalWidth || !image.naturalHeight) return;
@@ -30,13 +31,21 @@ function layout(): void {
   image.style.height = `${Math.max(1, width * image.naturalHeight / image.naturalWidth)}px`;
 }
 
-void image.decode().then(() => {
+void prepareImage(image, new URL(`../../assets/${asset.file}`, location.href).href,
+  window.murzPassive.imageReadiness, preparation.signal,
+  stage => window.murzPassive.diagnostic(stage)).then(() => {
+  if (preparation.signal.aborted) return;
   layout();
   // Layout measurement is synchronous even while the native window is hidden.
   const rect = group.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) throw new Error('Empty image layout');
+  window.murzPassive.diagnostic('layout-applied');
+  window.murzPassive.diagnostic('ready-sent');
   window.murzPassive.ready(Math.ceil(rect.width + 8), Math.ceil(rect.height + 8));
   document.body.classList.add('ready');
-}).catch(() => window.murzPassive.failed());
-image.addEventListener('error', () => window.murzPassive.failed());
+}).catch(error => {
+  if (!preparation.signal.aborted) window.murzPassive.failed(error instanceof ImagePreparationError ? error.reason : 'layout');
+});
+window.addEventListener('pagehide', () => preparation.abort());
 window.addEventListener('resize', layout);
 document.addEventListener('contextmenu', event => event.preventDefault());
