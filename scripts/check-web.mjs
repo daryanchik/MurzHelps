@@ -19,8 +19,8 @@ for (const url of urls) {
   assert.ok((await stat(file)).size > 0, `Empty resource: ${url}`);
 }
 assert.ok(html.includes('</main>') && html.includes('</body>') && html.includes('</html>'));
-assert.ok(html.includes('/releases/latest/download/MurzHelps.dmg'), 'macOS release link missing');
-assert.ok(html.includes('/releases/latest/download/MurzHelps-0.4.0-Setup.exe'), 'Windows release link missing');
+assert.ok(html.includes('/releases/latest/download/MurzHelps_MacOS.dmg'), 'macOS release link missing');
+assert.ok(html.includes('/releases/latest/download/MurzHelps_Windows.exe'), 'Windows release link missing');
 
 assert.equal((html.match(/data-download-link/g) || []).length, 1);
 assert.equal((html.match(/data-windows-download-link/g) || []).length, 1);
