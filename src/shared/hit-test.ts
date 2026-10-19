@@ -89,7 +89,7 @@ export function hitScreenPoint(mask: InputMask, bounds: Rect, point: Point): boo
 }
 
 /** Lossless scanline union for native Windows input regions, including holes. */
-export function maskToRectangles(mask: InputMask): Rect[] {
+export function maskToRectangles(mask: InputMask, maximum = Infinity): Rect[] {
   const result: Rect[] = [];
   let previous = new Map<string, Rect>();
   for (let y = 0; y < mask.height; y++) {
@@ -102,7 +102,10 @@ export function maskToRectangles(mask: InputMask): Rect[] {
       const existing = previous.get(key);
       const rect = existing ?? { x: start, y, width, height: 0 };
       rect.height++;
-      if (!existing) result.push(rect);
+      if (!existing) {
+        if (result.length >= maximum) throw new RangeError('Native shape rectangle limit exceeded');
+        result.push(rect);
+      }
       current.set(key, rect);
     }
     previous = current;

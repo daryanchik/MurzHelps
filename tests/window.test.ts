@@ -31,6 +31,8 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false, available: Sh
     getCursorScreenPoint: () => cursor,
   });
   const power = new EventEmitter();
+  const diagnostics: Record<string, any>[] = [];
+  const errors: string[] = [];
   let quit = 0;
   class FakeWindow extends EventEmitter {
     visible = false;
@@ -66,7 +68,7 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false, available: Sh
   bitmap[4 * 4 + 3] = 255;
   const electron = {
     app: { quit: () => quit++ }, BrowserWindow: FakeWindow, ipcMain: ipc, screen, powerMonitor: power,
-    dialog: { showErrorBox() {} },
+    dialog: { showErrorBox(_title: string, message: string) { errors.push(message); } },
     nativeImage: { createFromPath: (file: string) => ({ isEmpty: () => false, getSize: () => ({ width: 3, height: 3 }), toBitmap: () => {
       if (!/ms[12]\.png$/.test(file)) return bitmap;
       const variant = Buffer.alloc(3 * 3 * 4);
@@ -78,7 +80,8 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false, available: Sh
   vm.runInNewContext(code, {
     module, exports: module.exports,
     require: (name: string) => name === 'electron' ? electron : requireNode(name),
-    __dirname: '/app/dist/main', process: { platform }, console: { warn() {}, error() {} },
+    __dirname: '/app/dist/main', process: { platform },
+    console: { warn() {}, error() {}, info(line: string) { diagnostics.push(JSON.parse(line)); } },
     setTimeout: (callback: () => void, ms: number) => { const id = {}; timeouts.set(id, { callback, ms }); return id; },
     clearTimeout: (id: object) => timeouts.delete(id),
     setInterval: (callback: () => void) => { const id = {}; intervals.set(id, callback); return id; },
@@ -96,7 +99,7 @@ function harness(platform: 'darwin' | 'win32', shapeFails = false, available: Sh
   const advance = (ms: number) => {
     for (const [id, timer] of [...timeouts]) if (timer.ms === ms) { timeouts.delete(id); timer.callback(); }
   };
-  return { elapse: (ms: number) => { now += ms; timer.tick(); }, controller, timer, summon, window, event, ipc, snapshot, ready, screen, display, cursor, intervals, timeouts, power, advance, quit: () => quit };
+  return { elapse: (ms: number) => { now += ms; timer.tick(); }, controller, timer, summon, window, event, ipc, snapshot, ready, screen, display, cursor, intervals, timeouts, power, advance, diagnostics, errors, quit: () => quit };
 }
 
 test('actual controller blocks early display; dismissal and summon reuse the same window', t => {
@@ -266,4 +269,146 @@ test('main overlay retains nonactivating fullscreen flags and the secondary disp
   assert.equal(h.window.options.webPreferences.nodeIntegration, false);
   assert.ok(h.window.bounds.x >= h.display.workArea.x && h.window.bounds.x < 0);
   assert.ok(h.window.bounds.width <= h.display.workArea.width);
+});
+
+test('dismissal cancels a queued display reflow and its obsolete readiness watchdog', t => {
+  const h = harness('win32'); t.after(() => h.controller.dispose()); h.summon();
+  h.screen.emit('display-metrics-changed');
+  const staleReflow = [...h.timeouts.values()].find(timer => timer.ms === 100)!.callback;
+  h.timer.stop();
+  staleReflow(); h.advance(15000);
+  assert.equal(h.quit(), 0);
+  assert.equal(h.window.visible, false); assert.equal(h.window.ignored, true);
+  assert.equal(h.timeouts.size, 0);
+});
+
+test('only an outstanding wanted revision can time out; old callbacks cannot cancel a newer visit', t => {
+  const h = harness('win32'); t.after(() => h.controller.dispose());
+  assert.equal(h.timeouts.size, 0, 'an intentionally hidden window has no ready watchdog');
+  h.screen.emit('display-metrics-changed'); h.advance(100); h.advance(15000);
+  assert.equal(h.quit(), 0);
+  h.timer.startBreakNow();
+  const oldTimeout = [...h.timeouts.values()].find(timer => timer.ms === 15000)!.callback;
+  h.timer.stop(); h.timer.startBreakNow();
+  oldTimeout();
+  assert.equal(h.quit(), 0);
+  h.ready(); h.advance(15000);
+  assert.equal(h.window.visible, true); assert.equal(h.quit(), 0);
+  h.timer.stop(); h.timer.startBreakNow(); h.advance(15000);
+  assert.equal(h.quit(), 1); assert.equal(h.window.visible, false); assert.equal(h.window.ignored, true);
+  const failure = h.diagnostics.find(entry => entry.event === 'failed');
+  assert.equal(failure?.reason, 'renderer-timeout');
+  assert.equal(failure?.revision, h.diagnostics.filter(entry => entry.event === 'layout-sent').at(-1)?.revision);
+  assert.equal(failure?.stage, 'awaiting-layout');
+  assert.match(h.errors[0], /renderer-timeout/);
+});
+
+test('HTML loading succeeds while hidden, or fails with a distinct bounded watchdog', async t => {
+  const loaded = harness('win32'); t.after(() => loaded.controller.dispose());
+  await loaded.controller.load();
+  loaded.window.webContents.emit('did-finish-load');
+  loaded.advance(15000);
+  assert.equal(loaded.timeouts.size, 0); assert.equal(loaded.quit(), 0); assert.equal(loaded.window.visible, false);
+  assert.ok(loaded.diagnostics.some(entry => entry.event === 'html-loaded'));
+
+  const rejected = harness('win32'); t.after(() => rejected.controller.dispose());
+  rejected.window.loadFile = async () => { throw new Error('secret path to missing HTML'); };
+  await rejected.controller.load();
+  assert.equal(rejected.quit(), 1); assert.match(rejected.errors[0], /html-load/);
+  assert.doesNotMatch(JSON.stringify(rejected.diagnostics), /secret/);
+
+  const stalled = harness('win32'); t.after(() => stalled.controller.dispose());
+  let finish!: () => void;
+  stalled.window.loadFile = () => new Promise<void>(resolve => { finish = resolve; });
+  const loading = stalled.controller.load();
+  stalled.advance(15000);
+  assert.equal(stalled.quit(), 1); assert.match(stalled.errors[0], /html-timeout/);
+  finish(); await loading;
+  assert.equal(stalled.timeouts.size, 0); assert.equal(stalled.window.visible, false);
+});
+
+test('main-frame load and preload errors fail once, while a subframe error cannot close Murz', t => {
+  for (const kind of ['html', 'preload']) {
+    const h = harness('win32'); t.after(() => h.controller.dispose());
+    h.window.webContents.emit('did-fail-load', {}, -6, 'private details', 'file:///private', false);
+    assert.equal(h.quit(), 0);
+    if (kind === 'html') h.window.webContents.emit('did-fail-load', {}, -6, 'private details', 'file:///private', true);
+    else h.window.webContents.emit('preload-error', {}, '/private', new Error('private details'));
+    h.window.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+    assert.equal(h.quit(), 1); assert.equal(h.window.ignored, true); assert.equal(h.window.visible, false);
+    assert.doesNotMatch(JSON.stringify(h.diagnostics), /private/);
+  }
+});
+
+test('shape is applied only after matching ready and its native duration is diagnosed', t => {
+  const h = harness('win32'); t.after(() => h.controller.dispose());
+  assert.equal(h.window.shapes.length, 0);
+  h.timer.startBreakNow(); assert.equal(h.window.shapes.length, 0);
+  h.ipc.emit(IPC.ready, h.event, h.snapshot().revision - 1);
+  assert.equal(h.window.shapes.length, 0); assert.equal(h.window.ignored, true);
+  h.ready();
+  assert.equal(h.window.shapes.length, 1);
+  const applied = h.diagnostics.find(entry => entry.event === 'shape-applied');
+  assert.ok(applied && applied.count > 0 && applied.count <= 4096 && applied.elapsedMs >= 0);
+});
+
+test('Windows fallback passes transparent pixels, retains buttons, and never leaves a hidden input rectangle', t => {
+  for (const unavailable of [false, true]) {
+    const h = harness('win32', !unavailable); t.after(() => h.controller.dispose());
+    if (unavailable) (h.window as any).setShape = undefined;
+    h.summon();
+    assert.equal(h.window.visible, true); assert.equal(h.window.ignored, true);
+    const { button, cat } = h.snapshot().layout;
+    for (const rect of [button, cat]) {
+      h.cursor.x = h.window.bounds.x + rect.x + rect.width / 2;
+      h.cursor.y = h.window.bounds.y + rect.y + rect.height / 2;
+      for (const poll of h.intervals.values()) poll();
+      assert.equal(h.window.ignored, false);
+    }
+    h.cursor.x = -10000; for (const poll of h.intervals.values()) poll();
+    assert.equal(h.window.ignored, true);
+    h.timer.stop(); assert.equal(h.intervals.size, 0); assert.equal(h.window.visible, false);
+    h.summon();
+    if (!unavailable) assert.equal(h.window.shapes.length, 2, 'a rejected native shape is not retried on every visit');
+  }
+});
+
+test('failure to reset a partially applied shape fails closed without throwing or blocking the desktop', t => {
+  const h = harness('win32'); t.after(() => h.controller.dispose());
+  h.window.setShape = () => { throw new Error('native region unavailable'); };
+  assert.doesNotThrow(() => h.summon());
+  assert.equal(h.quit(), 1); assert.equal(h.window.visible, false); assert.equal(h.window.ignored, true);
+  assert.match(h.errors[0], /shape-reset/);
+});
+
+test('over-budget Windows shapes restore the previous region and use alpha polling', t => {
+  const h = harness('win32'); t.after(() => h.controller.dispose());
+  h.summon(); h.timer.stop(); h.timer.startBreakNow();
+  h.controller.mask = { width: 130, height: 130,
+    pixels: Uint8Array.from({ length: 130 * 130 }, (_, i) => (i + Math.floor(i / 130)) % 2) };
+  h.ready();
+  assert.equal(h.window.shapes.length, 2); assert.equal(h.window.shapes[1].length, 0);
+  assert.equal(h.intervals.size, 1); assert.equal(h.window.visible, true); assert.equal(h.window.ignored, true);
+  assert.ok(h.diagnostics.some(entry => entry.event === 'shape-fallback' && entry.reason === 'rectangle-limit'));
+});
+
+test('renderer diagnostics and failures require the current revision and trusted main frame', t => {
+  const h = harness('win32'); t.after(() => h.controller.dispose());
+  h.timer.startBreakNow(); const old = h.snapshot().revision;
+  h.timer.stop(); h.timer.startBreakNow(); const revision = h.snapshot().revision;
+  for (const event of [{ sender: {}, senderFrame: {} }, { ...h.event, senderFrame: {} }]) {
+    h.ipc.emit(IPC.error, event, 'image-decode', revision);
+    h.ipc.emit(IPC.diagnostic, event, revision, 'decoding');
+  }
+  h.ipc.emit(IPC.error, h.event, 'image-decode', old);
+  h.ipc.emit(IPC.error, h.event, '/private/raw error', revision);
+  h.ipc.emit(IPC.diagnostic, h.event, old, 'decoding');
+  h.ipc.emit(IPC.diagnostic, h.event, revision, '/private/raw error');
+  assert.equal(h.quit(), 0);
+  assert.equal(h.diagnostics.filter(entry => entry.event === 'renderer-progress').length, 0);
+  h.ipc.emit(IPC.diagnostic, h.event, revision, 'decoding');
+  h.ipc.emit(IPC.diagnostic, h.event, revision, 'decoding');
+  assert.equal(h.diagnostics.filter(entry => entry.event === 'renderer-progress').length, 1);
+  h.ipc.emit(IPC.error, h.event, 'image-decode', revision);
+  assert.equal(h.quit(), 1); assert.match(h.errors[0], /image-decode/);
 });

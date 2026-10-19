@@ -1,7 +1,7 @@
 import { formatRemaining, isVisit, idleSnapshot, type TimerSnapshot } from '../shared/timer-state';
 import { murzAsset } from '../shared/murz-assets';
 import { murzCopy } from '../shared/murz-copy';
-import type { LayoutSnapshot, MurzBridge, Rect } from '../shared/types';
+import type { LayoutSnapshot, MurzBridge, Rect, RendererFailure } from '../shared/types';
 
 declare global { interface Window { murz: MurzBridge } }
 const image = document.querySelector<HTMLImageElement>('#murz')!;
@@ -40,12 +40,16 @@ async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
   latestRevision = snapshot.revision;
   displayedInterval = null;
   updateButtons();
+  let failure: RendererFailure = 'image-decode';
   try {
     const asset = murzAsset(snapshot.presentation.asset);
     const src = new URL(`../../assets/${asset.file}`, location.href).href;
     if (image.src !== src) image.src = src;
+    window.murz.diagnostic(snapshot.revision, 'decoding');
     await image.decode();
     if (snapshot.revision !== latestRevision) return;
+    if (!image.naturalWidth || !image.naturalHeight) throw new Error('Empty decoded image');
+    failure = 'layout';
     image.classList.toggle('outlined', asset.outline);
     place(image, snapshot.layout.cat);
     place(dismiss, snapshot.layout.button);
@@ -58,13 +62,17 @@ async function applyLayout(snapshot: LayoutSnapshot): Promise<void> {
     info.style.borderRadius = `${snapshot.layout.infoRadius ?? 0}px`;
     dismiss.style.borderRadius = snooze.style.borderRadius = `${snapshot.layout.buttonRadius}px`;
     visitMessage = snapshot.presentation.message;
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    if (snapshot.revision !== latestRevision) return;
     displayedInterval = snapshot.intervalId;
     updateButtons();
+    // Force layout, not painting: hidden native windows may not receive frames.
+    // decode() above and this geometry read finish the preparation before ready.
+    const rect = image.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) throw new Error('Empty image layout');
+    window.murz.diagnostic(snapshot.revision, 'layout-applied');
+    window.murz.diagnostic(snapshot.revision, 'ready-sent');
     window.murz.ready(snapshot.revision);
   } catch {
-    if (snapshot.revision === latestRevision) window.murz.reportError();
+    if (snapshot.revision === latestRevision) window.murz.reportError(failure, snapshot.revision);
   }
 }
 function applyTimer(snapshot: TimerSnapshot): void {
@@ -78,9 +86,11 @@ function applyTimer(snapshot: TimerSnapshot): void {
   updateButtons();
 }
 window.murz.onLayout(snapshot => { void applyLayout(snapshot); });
-void window.murz.getLayout().then(applyLayout).catch(() => window.murz.reportError());
+void window.murz.getLayout().then(applyLayout).catch(() => window.murz.reportError('get-layout', latestRevision));
 window.murz.onTimer(applyTimer);
-void window.murz.getTimer().then(applyTimer).catch(() => window.murz.reportError());
+void window.murz.getTimer().then(applyTimer).catch(() => window.murz.reportError('get-timer', latestRevision));
+window.addEventListener('error', () => window.murz.reportError('script', latestRevision));
+window.addEventListener('unhandledrejection', () => window.murz.reportError('script', latestRevision));
 for (const [button, action] of [[dismiss, 'dismiss'], [snooze, 'snooze']] as const) {
   button.addEventListener('click', () => {
     if (button.disabled || !isVisit(timerState.phase) || pendingAction === timerState.intervalId) return;

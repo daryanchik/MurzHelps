@@ -74,6 +74,13 @@ test('scanline rectangles preserve every hole and every body pixel', () => {
 test('full rectangle compresses into one native region', () => {
   assert.deepEqual(maskToRectangles({ width: 200, height: 300, pixels: new Uint8Array(60000).fill(1) }), [{ x: 0, y: 0, width: 200, height: 300 }]);
 });
+test('fragmented masks stop at the native region budget instead of returning a lossy shape', () => {
+  const fragmented = { width: 6, height: 2, pixels: Uint8Array.from([1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1]) };
+  assert.throws(() => maskToRectangles(fragmented, 5), RangeError);
+  assert.equal(maskToRectangles(fragmented, 6).length, 6);
+  const solid = { width: 100, height: 100, pixels: new Uint8Array(10000).fill(1) };
+  assert.equal(maskToRectangles(solid, 1).length, 1, 'vertical merging does not consume more budget');
+});
 test('visible timer panel receives input but its transparent gap still passes clicks', () => {
   const withInfo = { ...layout, window: { ...layout.window, width: 10 },
     info: { x: 7, y: 0, width: 3, height: 6 } };

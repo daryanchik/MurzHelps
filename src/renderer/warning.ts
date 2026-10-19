@@ -32,11 +32,10 @@ function layout(): void {
 
 void image.decode().then(() => {
   layout();
-  requestAnimationFrame(() => {
-    const rect = group.getBoundingClientRect();
-    window.murzPassive.ready(Math.ceil(rect.width + 8), Math.ceil(rect.height + 8));
-    document.body.classList.add('ready');
-  });
+  // Layout measurement is synchronous even while the native window is hidden.
+  const rect = group.getBoundingClientRect();
+  window.murzPassive.ready(Math.ceil(rect.width + 8), Math.ceil(rect.height + 8));
+  document.body.classList.add('ready');
 }).catch(() => window.murzPassive.failed());
 image.addEventListener('error', () => window.murzPassive.failed());
 window.addEventListener('resize', layout);

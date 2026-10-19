@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { discoverMurzAssets } from './assets';
 import { cursorDisplay, retainedDisplay } from './displays';
 import { murzAssets, murzAsset, type MurzAssetId, type MurzPresentation, type ShortMurzAssetId } from '../shared/murz-assets';
@@ -13,6 +14,10 @@ import { IPC, type LayoutSnapshot, type OverlayLayout } from '../shared/types';
 import { VisibilityState } from '../shared/visibility';
 import { configureOverlay, showOverlay, hideOverlay } from './platform';
 import { idleSnapshot, isVisit, type TimerSnapshot } from '../shared/timer-state';
+import { diagnosticPath, logOverlay } from './overlay-diagnostics';
+
+const READY_TIMEOUT_MS = 15_000;
+const MAX_SHAPE_RECTANGLES = 4096;
 
 export class MurzWindow {
   readonly window: BrowserWindow;
@@ -23,10 +28,16 @@ export class MurzWindow {
   private layout!: OverlayLayout;
   private mask!: InputMask;
   private nativeShape = false;
+  private shapeApplied = false;
+  private shapeUnavailable = false;
   private ignoringMouse = true;
   private polling?: ReturnType<typeof setInterval>;
   private reflowTimer?: ReturnType<typeof setTimeout>;
   private readyTimer?: ReturnType<typeof setTimeout>;
+  private loadTimer?: ReturnType<typeof setTimeout>;
+  private loadState: 'not-started' | 'loading' | 'loaded' = 'not-started';
+  private rendererStage = 'awaiting-layout';
+  private readonly reportedStages = new Set<string>();
   private disposed = false;
   private failed = false;
   private timerState = idleSnapshot();
@@ -79,15 +90,31 @@ export class MurzWindow {
     this.window.setIgnoreMouseEvents(true, { forward: true });
     configureOverlay(this.window);
     this.window.webContents.setZoomFactor(1);
-    void this.window.webContents.setVisualZoomLevelLimits(1, 1);
+    void this.window.webContents.setVisualZoomLevelLimits(1, 1)
+      .catch(() => this.fail(murzCopy.errors.renderer, 'zoom-configuration'));
     this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.window.webContents.on('will-navigate', event => event.preventDefault());
     this.window.webContents.on('will-attach-webview', event => event.preventDefault());
     this.window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.window.webContents.session.setPermissionCheckHandler(() => false);
-    this.window.webContents.on('render-process-gone', (_event, details) => {
-      if (!this.disposed) { console.error(details.reason); this.fail(murzCopy.errors.renderer); }
+    this.window.webContents.on('did-finish-load', () => {
+      this.window.webContents.setZoomFactor(1);
+      this.trace('html-loaded');
     });
+    this.window.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
+      if (mainFrame) { this.trace('html-load-failed', { code }); this.fail(murzCopy.errors.loading, 'html-load'); }
+    });
+    this.window.webContents.on('preload-error', () => this.fail(murzCopy.errors.loading, 'preload'));
+    this.window.webContents.on('console-message', details => {
+      // Do not log Chromium messages, source URLs or stacks: they can contain local paths.
+      if (details.level === 'error' && !this.reportedStages.has('console-error')) {
+        this.reportedStages.add('console-error'); this.trace('renderer-console-error');
+      }
+    });
+    this.window.webContents.on('render-process-gone', (_event, details) => {
+      if (!this.disposed) { this.trace('renderer-gone', { reason: details.reason }); this.fail(murzCopy.errors.renderer, 'renderer-gone'); }
+    });
+    this.window.on('unresponsive', () => this.fail(murzCopy.errors.renderer, 'renderer-unresponsive'));
     this.window.on('will-move', event => event.preventDefault());
     this.window.on('will-resize', event => event.preventDefault());
     this.window.on('hide', () => this.stopPolling());
@@ -101,6 +128,9 @@ export class MurzWindow {
 
     ipcMain.handle(IPC.getLayout, event => {
       if (!this.authorized(event)) throw new Error('Unexpected IPC sender');
+      if (!this.reportedStages.has('get-layout')) {
+        this.reportedStages.add('get-layout'); this.trace('layout-requested');
+      }
       return this.snapshot();
     });
     ipcMain.handle(IPC.getTimer, event => {
@@ -112,16 +142,31 @@ export class MurzWindow {
     ipcMain.on(IPC.snooze, this.onSnooze);
     ipcMain.on(IPC.pointer, this.onPointer);
     ipcMain.on(IPC.error, this.onRendererError);
+    ipcMain.on(IPC.diagnostic, this.onDiagnostic);
     screen.on('display-added', this.scheduleReflow);
     screen.on('display-removed', this.scheduleReflow);
     screen.on('display-metrics-changed', this.scheduleReflow);
     powerMonitor.on('resume', this.scheduleReflow);
     powerMonitor.on('unlock-screen', this.scheduleReflow);
     this.reflow(false);
+    this.trace('created', { platform: process.platform, packaged: app.isPackaged });
   }
 
   async load(): Promise<void> {
-    await this.window.loadFile(path.join(__dirname, '../renderer/index.html'));
+    if (this.disposed || this.failed || this.loadState !== 'not-started') return;
+    this.loadState = 'loading';
+    this.trace('html-load-start');
+    this.loadTimer = setTimeout(() => {
+      if (this.loadState === 'loading' && !this.disposed && !this.failed) this.fail(murzCopy.errors.loading, 'html-timeout');
+    }, READY_TIMEOUT_MS);
+    try {
+      await this.window.loadFile(path.join(__dirname, '../renderer/index.html'));
+      this.loadState = 'loaded';
+    } catch {
+      this.fail(murzCopy.errors.loading, 'html-load');
+    } finally {
+      clearTimeout(this.loadTimer); this.loadTimer = undefined;
+    }
   }
 
   setTimerSnapshot(snapshot: TimerSnapshot): void {
@@ -154,10 +199,12 @@ export class MurzWindow {
 
   dismiss(): void {
     this.state.dismiss();
-    clearTimeout(this.readyTimer);
+    clearTimeout(this.reflowTimer); this.reflowTimer = undefined;
+    this.cancelReadyTimer();
     this.stopPolling();
     this.setIgnoring(true);
     hideOverlay(this.window);
+    this.trace('hidden');
   }
 
   dispose(): void {
@@ -165,7 +212,8 @@ export class MurzWindow {
     this.disposed = true;
     this.stopPolling();
     clearTimeout(this.reflowTimer);
-    clearTimeout(this.readyTimer);
+    this.cancelReadyTimer();
+    clearTimeout(this.loadTimer);
     ipcMain.removeHandler(IPC.getLayout);
     ipcMain.removeHandler(IPC.getTimer);
     ipcMain.off(IPC.ready, this.onReady);
@@ -173,6 +221,7 @@ export class MurzWindow {
     ipcMain.off(IPC.snooze, this.onSnooze);
     ipcMain.off(IPC.pointer, this.onPointer);
     ipcMain.off(IPC.error, this.onRendererError);
+    ipcMain.off(IPC.diagnostic, this.onDiagnostic);
     screen.off('display-added', this.scheduleReflow);
     screen.off('display-removed', this.scheduleReflow);
     screen.off('display-metrics-changed', this.scheduleReflow);
@@ -181,7 +230,7 @@ export class MurzWindow {
   }
 
   private authorized(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
-    return !this.disposed && !this.window.isDestroyed()
+    return !this.disposed && !this.failed && !this.window.isDestroyed()
       && event.sender === this.window.webContents
       && event.senderFrame === this.window.webContents.mainFrame;
   }
@@ -192,13 +241,17 @@ export class MurzWindow {
 
   private onReady = (event: IpcMainEvent, revision: unknown): void => {
     if (!this.authorized(event) || typeof revision !== 'number' || !this.state.acknowledge(revision)) return;
-    clearTimeout(this.readyTimer);
+    this.cancelReadyTimer();
+    this.trace('ready-received');
     if (!this.state.shouldShow) return;
+    this.applyNativeShape();
+    if (this.failed) return;
     configureOverlay(this.window);
     // Resolve the hit-test BEFORE showing; no invisible rectangle on first frame.
     if (this.nativeShape) this.setIgnoring(false);
     else this.samplePointer();
     showOverlay(this.window);
+    this.trace('shown');
   };
 
   private onDismiss = (event: IpcMainEvent, intervalId: unknown): void => {
@@ -234,56 +287,110 @@ export class MurzWindow {
     if (this.authorized(event) && !this.nativeShape && this.window.isVisible()) this.samplePointer();
   };
 
-  private onRendererError = (event: IpcMainEvent): void => {
-    if (this.authorized(event)) this.fail(murzCopy.errors.renderer);
+  private onRendererError = (event: IpcMainEvent, reason: unknown, revision: unknown): void => {
+    if (!this.authorized(event) || typeof reason !== 'string'
+      || !['image-decode', 'layout', 'get-layout', 'get-timer', 'script'].includes(reason)) return;
+    if (revision !== this.state.revision && !(revision === -1 && this.state.readyRevision === -1)) return;
+    this.fail(reason === 'image-decode' ? murzCopy.errors.missingCat : murzCopy.errors.renderer, reason);
+  };
+
+  private onDiagnostic = (event: IpcMainEvent, revision: unknown, stage: unknown): void => {
+    if (!this.authorized(event) || revision !== this.state.revision || typeof stage !== 'string'
+      || !['decoding', 'layout-applied', 'ready-sent'].includes(stage) || this.reportedStages.has(stage)) return;
+    this.reportedStages.add(stage); this.rendererStage = stage;
+    this.trace('renderer-progress');
   };
 
   private scheduleReflow = (): void => {
-    if (this.disposed) return;
+    if (this.disposed || this.failed) return;
     clearTimeout(this.reflowTimer);
     // The next summon recalculates everything when the cat is dismissed.
     if (!this.state.wanted) return;
-    clearTimeout(this.readyTimer);
+    this.cancelReadyTimer();
     this.stopPolling();
     hideOverlay(this.window);
     this.setIgnoring(true);
     this.state.invalidate();
+    const revision = this.state.revision;
     this.reflowTimer = setTimeout(() => {
+      if (this.disposed || this.failed || !this.state.wanted || revision !== this.state.revision) return;
+      this.reflowTimer = undefined;
       try { this.reflow(true); }
       catch (error) { console.error(error); this.fail(murzCopy.errors.renderer); }
     }, 100);
   };
 
   private reflow(notify: boolean): void {
-    if (this.disposed) return;
+    if (this.disposed || this.failed || (notify && !this.state.wanted)) return;
     clearTimeout(this.reflowTimer);
     this.stopPolling();
     hideOverlay(this.window);
     this.setIgnoring(true);
     this.state.invalidate();
+    this.rendererStage = 'awaiting-layout'; this.reportedStages.clear();
+    this.cancelReadyTimer();
     const display = retainedDisplay(this.displayId);
     this.displayId = display.id;
     this.layout = { ...calculateLayout(display.workArea, this.alpha, true),
       outline: murzAsset(this.presentation.asset).outline ? 1 : 0 };
+    const started = performance.now();
     this.mask = makeInputMask(this.alpha, this.layout);
+    this.trace('mask-created', { elapsedMs: Math.round(performance.now() - started),
+      width: this.mask.width, height: this.mask.height, scaleFactor: display.scaleFactor });
     this.window.setBounds(this.layout.window, false);
     this.nativeShape = false;
-    // macOS has no setShape API. Never call it there.
-    if (process.platform === 'win32') {
-      const rectangles = maskToRectangles(this.mask);
-      if (rectangles.length === 0) throw new Error('Empty interaction region');
+    this.watchReady();
+    if (notify) { this.trace('layout-sent'); this.window.webContents.send(IPC.layout, this.snapshot()); }
+  }
+
+  private applyNativeShape(): void {
+    // SetShape can clip painting as well as input. Apply only after renderer readiness.
+    // macOS keeps the existing alpha polling path and never calls this API.
+    if (process.platform !== 'win32') return;
+    let rectangles: ReturnType<typeof maskToRectangles> | undefined;
+    const started = performance.now();
+    if (!this.shapeUnavailable && typeof this.window.setShape === 'function') {
+      try { rectangles = maskToRectangles(this.mask, MAX_SHAPE_RECTANGLES); }
+      catch { this.trace('shape-fallback', { reason: 'rectangle-limit' }); }
+    } else this.trace('shape-fallback', { reason: 'api-unavailable' });
+    if (rectangles?.length) {
+      this.trace('shape-created', { count: rectangles.length, elapsedMs: Math.round(performance.now() - started) });
       try {
         this.window.setShape(rectangles);
-        this.nativeShape = true;
-      } catch (error) {
-        // Restore the default shape if the native call partially succeeded.
-        this.window.setShape([]);
-        console.warn('Native input region unavailable; using pointer alpha hit testing.', error);
+        this.shapeApplied = this.nativeShape = true;
+        this.trace('shape-applied', { count: rectangles.length, elapsedMs: Math.round(performance.now() - started) });
+        return;
+      } catch {
+        this.shapeUnavailable = true;
+        // A throwing native call may have applied part of the region.
+        this.shapeApplied = true;
+        this.trace('shape-fallback', { reason: 'native-error' });
       }
     }
-    clearTimeout(this.readyTimer);
-    this.readyTimer = setTimeout(() => this.fail(murzCopy.errors.loading), 15000);
-    if (notify) this.window.webContents.send(IPC.layout, this.snapshot());
+    if (this.shapeApplied) {
+      try { this.window.setShape([]); this.shapeApplied = false; }
+      catch { this.fail(murzCopy.errors.renderer, 'shape-reset'); }
+    }
+  }
+
+  private cancelReadyTimer(): void { clearTimeout(this.readyTimer); this.readyTimer = undefined; }
+
+  private watchReady(): void {
+    if (!this.state.wanted || this.state.readyRevision === this.state.revision) return;
+    const revision = this.state.revision;
+    const handle = setTimeout(() => {
+      if (this.readyTimer !== handle || this.disposed || this.failed || !this.state.wanted
+        || revision !== this.state.revision || this.state.readyRevision === revision) return;
+      this.fail(murzCopy.errors.loading, 'renderer-timeout');
+    }, READY_TIMEOUT_MS);
+    this.readyTimer = handle;
+    this.trace('ready-watchdog-started');
+  }
+
+  private trace(event: string, fields: Record<string, string | number | boolean | null> = {}): void {
+    logOverlay(event, { revision: this.state.revision, readyRevision: this.state.readyRevision,
+      wanted: this.state.wanted, visible: !this.window.isDestroyed() && this.window.isVisible(),
+      phase: this.loadState, stage: this.rendererStage, asset: this.presentation.asset, ...fields });
   }
 
   private samplePointer(): void {
@@ -302,12 +409,14 @@ export class MurzWindow {
     this.polling = undefined;
   }
 
-  private fail(message: string): void {
+  private fail(message: string, reason = 'overlay'): void {
     if (this.failed || this.disposed) return;
+    this.trace('failed', { reason });
     this.failed = true;
+    clearTimeout(this.loadTimer);
     this.dismiss();
-    console.error(message);
-    dialog.showErrorBox(murzCopy.brand, message);
+    const file = diagnosticPath();
+    dialog.showErrorBox(murzCopy.brand, `${message}\nКод: ${reason}.${file ? `\nДиагностика: ${file}` : ''}`);
     app.quit();
   }
 }

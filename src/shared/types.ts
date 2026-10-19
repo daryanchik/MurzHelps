@@ -35,6 +35,9 @@ export interface LayoutSnapshot {
   intervalId: number;
 }
 
+export type RendererStage = 'decoding' | 'layout-applied' | 'ready-sent';
+export type RendererFailure = 'image-decode' | 'layout' | 'get-layout' | 'get-timer' | 'script';
+
 export interface MurzBridge {
   getLayout(): Promise<LayoutSnapshot>;
   onLayout(callback: (snapshot: LayoutSnapshot) => void): () => void;
@@ -44,7 +47,8 @@ export interface MurzBridge {
   dismiss(intervalId: number): void;
   snooze(intervalId: number): void;
   pointerMoved(): void;
-  reportError(): void;
+  diagnostic(revision: number, stage: RendererStage): void;
+  reportError(reason: RendererFailure, revision: number): void;
 }
 
 export interface SettingsBridge {
@@ -61,6 +65,7 @@ export const IPC = {
   snooze: 'murz:snooze',
   pointer: 'murz:pointer',
   error: 'murz:renderer-error',
+  diagnostic: 'murz:renderer-diagnostic',
   getTimer: 'murz:get-timer',
   timer: 'murz:timer',
   getSettings: 'murz:get-settings',

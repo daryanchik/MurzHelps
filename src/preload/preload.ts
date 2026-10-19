@@ -20,6 +20,7 @@ const bridge: MurzBridge = {
   dismiss: intervalId => ipcRenderer.send(IPC.dismiss, intervalId),
   snooze: intervalId => ipcRenderer.send(IPC.snooze, intervalId),
   pointerMoved: () => ipcRenderer.send(IPC.pointer),
-  reportError: () => ipcRenderer.send(IPC.error),
+  diagnostic: (revision, stage) => ipcRenderer.send(IPC.diagnostic, revision, stage),
+  reportError: (reason, revision) => ipcRenderer.send(IPC.error, reason, revision),
 };
 contextBridge.exposeInMainWorld('murz', bridge);
