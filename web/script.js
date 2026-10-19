@@ -1,9 +1,10 @@
 "use strict";
 
-// Repository links remain valid before and after the v0.2.0 release.
+// Platform downloads and repository links.
 const SITE = Object.freeze({
   repositoryUrl: "https://github.com/daryanchik/MurzHelps",
-downloadUrl: "https://github.com/daryanchik/MurzHelps/releases/latest/download/MurzHelps.dmg",                    // Empty = open the repository's releases listing (includes prereleases).
+downloadUrl: "https://github.com/daryanchik/MurzHelps/releases/latest/download/MurzHelps_MacOS.dmg",
+windowsDownloadUrl: "https://github.com/daryanchik/MurzHelps/releases/latest/download/MurzHelps_Windows.exe",
   catImage: "./assets/murz-hero.png",
 });
 
@@ -34,9 +35,11 @@ function activateLinks(selector, url) {
 const repo = repositoryUrl(SITE.repositoryUrl);
 const releases = repo ? `${repo}/releases` : null;
 const directDownload = safeHttps(SITE.downloadUrl);
+const windowsDownload = safeHttps(SITE.windowsDownloadUrl);
 activateLinks("[data-repo-link]", repo);
 activateLinks("[data-release-link]", releases);
 activateLinks("[data-download-link]", directDownload || releases);
+activateLinks("[data-windows-download-link]", windowsDownload || releases);
 const downloadStatus = document.getElementById("download-status");
 
 if (downloadStatus && (directDownload || releases)) {

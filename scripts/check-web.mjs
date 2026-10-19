@@ -19,13 +19,15 @@ for (const url of urls) {
   assert.ok((await stat(file)).size > 0, `Empty resource: ${url}`);
 }
 assert.ok(html.includes('</main>') && html.includes('</body>') && html.includes('</html>'));
-assert.ok(!html.includes('/releases/latest'), 'latest excludes prereleases; use the actual releases listing');
-assert.ok(!html.includes('/releases/download/'), 'do not invent an installer URL before publication');
+assert.ok(html.includes('/releases/latest/download/MurzHelps.dmg'), 'macOS release link missing');
+assert.ok(html.includes('/releases/latest/download/MurzHelps-0.4.0-Setup.exe'), 'Windows release link missing');
+
 assert.equal((html.match(/data-download-link/g) || []).length, 1);
+assert.equal((html.match(/data-windows-download-link/g) || []).length, 1);
 assert.equal((html.match(/data-release-link/g) || []).length, 1);
 assert.ok(html.includes('href="https://github.com/daryanchik/MurzHelps"'));
 assert.ok(html.includes('href="./assets/murz-icon.png"'));
 // The published site may describe an earlier release than the desktop sources.
-const siteVersion = html.match(/v(\d+\.\d+(?:\.\d+)?) · Apple Silicon/);
-assert.ok(siteVersion, 'The site must identify its published Apple Silicon release');
+const siteVersion = html.match(/v(\d+\.\d+(?:\.\d+)?) · macOS \/ Windows/);
+assert.ok(siteVersion, 'The site must identify its published macOS and Windows release');
 console.log(`Website resources, favicon, release links and published version ${siteVersion[1]} validated under /MurzHelps/.`);

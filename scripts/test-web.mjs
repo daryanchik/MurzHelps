@@ -63,7 +63,11 @@ try {
 
       assert.equal(
         await page.locator('[data-download-link]').getAttribute('href'),
-        'https://github.com/daryanchik/MurzHelps/releases/download/v0.3.1/MurzHelps.dmg'
+        'https://github.com/daryanchik/MurzHelps/releases/latest/download/MurzHelps_MacOS.dmg'
+      );
+      assert.equal(
+        await page.locator('[data-windows-download-link]').getAttribute('href'),
+        'https://github.com/daryanchik/MurzHelps/releases/latest/download/MurzHelps_Windows.exe'
       );
       assert.equal(await page.locator('[data-repo-link]').getAttribute('href'), 'https://github.com/daryanchik/MurzHelps');
       const transform = await page.locator('.murz-video').evaluate(el => {
